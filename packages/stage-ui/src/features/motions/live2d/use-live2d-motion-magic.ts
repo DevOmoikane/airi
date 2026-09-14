@@ -4,6 +4,7 @@ import type {
   Pose,
 } from '@proj-airi/model-driver-magic-live2d'
 import type { FitOptions, MagicModel } from '@proj-airi/motion-driver-magic'
+import type { ReadonlyLive2DMotionRecording } from '@proj-airi/stage-shared/personality'
 import type { MaybeRefOrGetter } from 'vue'
 
 import type { Live2DMotionMagicDataset } from './profiles'
@@ -19,7 +20,6 @@ import {
 import { fit } from '@proj-airi/motion-driver-magic'
 import { computed, onScopeDispose, reactive, readonly, shallowRef, toValue, watch } from 'vue'
 
-import { defaultLive2DMotionMagicDataset } from './profiles'
 import { applyLive2DMotionViewTarget, defaultLive2DMotionViewTargetState } from './view-target'
 
 export type Live2DMotionMagicMethod = 'ar-hmm' | 'var'
@@ -47,7 +47,7 @@ export interface UseLive2DMotionMagicOptions {
   random?: () => number
 }
 
-function evaluateDataset(dataset: Live2DMotionMagicDataset, atMs: number): Pose {
+function evaluateDataset(dataset: ReadonlyLive2DMotionRecording, atMs: number): Pose {
   const time = Math.min(dataset.durationMs, Math.max(0, atMs))
   const rightIndex = dataset.samples.findIndex(sample => sample.atMs >= time)
   if (rightIndex <= 0) {
@@ -64,7 +64,7 @@ function evaluateDataset(dataset: Live2DMotionMagicDataset, atMs: number): Pose 
   return pose
 }
 
-function toTrainingSequence(dataset: Live2DMotionMagicDataset, sampleRateHz: number) {
+function toTrainingSequence(dataset: ReadonlyLive2DMotionRecording, sampleRateHz: number) {
   const frameIntervalMs = 1000 / sampleRateHz
   const frameCount = Math.floor(dataset.durationMs / frameIntervalMs) + 1
   return createTrainingSequence({
@@ -158,8 +158,8 @@ export function useLive2DMotionMagic(options: UseLive2DMotionMagicOptions) {
     status.value = 'idle'
   }
 
-  /** Fits the selected method with the supplied dataset or the bundled dataset. */
-  async function initialize(dataset = toValue(options.dataset) ?? defaultLive2DMotionMagicDataset): Promise<void> {
+  /** Fits the selected method with the supplied dataset. */
+  async function initialize(dataset: ReadonlyLive2DMotionRecording): Promise<void> {
     if (toValue(options.disabled ?? false))
       return
 

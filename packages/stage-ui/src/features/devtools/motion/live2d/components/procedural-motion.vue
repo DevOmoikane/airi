@@ -197,7 +197,7 @@ function formatStrength(value: number): string {
         <BasicButton
           :disabled="props.disabled || !props.recording || motion.playing.value || motion.status.value === 'initializing'"
           :loading="motion.status.value === 'initializing'"
-          @click="motion.initialize()"
+          @click="props.recording && motion.initialize(props.recording)"
         >
           <span :class="['i-mingcute:chart-line-line']" />
           {{ motion.model.value

@@ -205,19 +205,9 @@ live2d:
           title: MAGIC
           description: Generate motion from the bundled MAGIC dataset.
       magic:
-        profile:
-          title: MAGIC profile
-          description: Select the bundled motion dataset that fits the MAGIC driver.
-          options:
-            idle-calm:
-              title: Idle / calm
-              description: Use the bundled idle and calm motion recording.
-            speaking-excited:
-              title: Speaking / excited
-              description: Use the bundled speaking and excited motion recording.
         skip-mouth-open:
           title: Skip generated mouth opening
-          description: Keep speech lip sync in control. Disable this option to use mouth opening from the profile.
+          description: Keep speech lip sync in control. Disable this option to use mouth opening from the personality dataset.
         force-view-target:
           title: Force forward view target
           description: Keep the eyes aimed forward while MAGIC moves the head.
@@ -1950,6 +1940,41 @@ websocket-secure-enabled:
   description: >-
     Use WSS for secure mobile connections. AIRI creates a self-signed
     certificate.
+personality:
+  title: Idle personality
+  description: Choose which personalities the avatar cycles through while idle.
+  randomize: Randomize
+  interval: Interval (seconds)
+  interval-hint: Between 15 and 90 seconds.
+  pinned: Pinned personality
+  pin-current: Pin current
+  list:
+    title: Personalities
+    bundled:
+      name:
+        idle-calm: Idle Calm
+        speaking-excited: Speaking Excited
+        playful: Playful
+        flirty: Flirty
+        shy: Shy
+        bored: Bored
+        sleepy: Sleepy
+        excited: Excited
+      description:
+        idle-calm: A steady, neutral idle for a resting avatar.
+        speaking-excited: Energetic gestures tuned for expressive dialogue.
+        playful: Light, bouncy and mischievous movement.
+        flirty: Slow, subtle and inviting poses.
+        shy: Small, hesitant movements that avoid strong eye contact.
+        bored: Low-energy, distracted slouching with frequent eye drift.
+        sleepy: Slow drifting motion with gentle blinks.
+        excited: Fast, bright reactions with wider movements.
+    custom:
+      import: Import recording
+      import-error: This file is not a valid motion recording.
+      remove: Remove
+      imported-at: Imported {date}
+      reset-to-defaults: Reset to defaults
 wip:
   title: Work in Progress
   description: >-

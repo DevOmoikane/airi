@@ -190,19 +190,9 @@ live2d:
           title: MAGIC
           description: 使用内置 MAGIC 数据集生成动作。
       magic:
-        profile:
-          title: MAGIC 配置
-          description: 选择用于拟合 MAGIC 驱动器的内置动作数据集。
-          options:
-            idle-calm:
-              title: 空闲 / 平静
-              description: 使用内置的空闲和平静动作录制数据。
-            speaking-excited:
-              title: 说话 / 兴奋
-              description: 使用内置的说话和兴奋动作录制数据。
         skip-mouth-open:
           title: 忽略生成的嘴部开合
-          description: 让语音口型控制嘴部开合。关闭此选项后将使用配置中的嘴部开合。
+          description: 让语音口型控制嘴部开合。关闭此选项后将使用人格数据集中的嘴部开合。
         force-view-target:
           title: 强制视线朝前
           description: MAGIC 转动头部时，让眼睛持续看向正前方。
@@ -1852,6 +1842,41 @@ tachie:
 websocket-secure-enabled:
   title: 作为安全 WebSocket (WSS) 提供服务
   description: 使用 WSS 建立安全的移动端连接。AIRI 会创建一个自签名证书。
+personality:
+  title: 待机人格
+  description: 选择 AIRI 空闲时循环切换的人格。
+  randomize: 随机切换
+  interval: 切换间隔（秒）
+  interval-hint: 介于 15 到 90 秒之间。
+  pinned: 固定人格
+  pin-current: 固定当前
+  list:
+    title: 人格
+    bundled:
+      name:
+        idle-calm: 平静发呆
+        speaking-excited: 说话兴奋
+        playful: 俏皮
+        flirty: 撒娇
+        shy: 害羞
+        bored: 无聊
+        sleepy: 困倦
+        excited: 兴奋
+      description:
+        idle-calm: 休息时平稳、中性的待机动作。
+        speaking-excited: 为表达性对话调校的活泼手势。
+        playful: 轻快、俏皮、富有活力的动作。
+        flirty: 缓慢、含蓄而富有吸引力的姿态。
+        shy: 轻微、犹豫的动作，会回避强烈的眼神接触。
+        bored: 低能量、心不在焉的松垮动作，伴随频繁的眼神漂移。
+        sleepy: 缓慢游移的动作与轻柔的眨眼。
+        excited: 更大幅度、更明亮的快速反应。
+    custom:
+      import: 导入录制数据
+      import-error: 该文件不是有效的动作录制数据。
+      remove: 移除
+      imported-at: 导入于 {date}
+      reset-to-defaults: 恢复默认
 wip:
   title: 正在开发中
   description: >-
