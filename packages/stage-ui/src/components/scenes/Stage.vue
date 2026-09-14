@@ -2,6 +2,7 @@
 import type { Live2DLipSync, Live2DLipSyncOptions } from '@proj-airi/model-driver-lipsync'
 import type { Profile } from '@proj-airi/model-driver-lipsync/shared/wlipsync'
 import type { CaptionChannelEvent } from '@proj-airi/stage-shared'
+import type { Live2DMotionRecording } from '@proj-airi/stage-shared/personality'
 import type { VrmInteractionTarget } from '@proj-airi/stage-ui-three'
 import type { SpeechProviderWithExtraOptions } from '@xsai-ext/providers/utils'
 import type { UnElevenLabsOptions } from 'unspeech'
@@ -14,6 +15,7 @@ import { sleep } from '@moeru/std'
 import { createLive2DLipSync } from '@proj-airi/model-driver-lipsync'
 import { wlipsyncProfile } from '@proj-airi/model-driver-lipsync/shared/wlipsync'
 import { createPlaybackManager, createSpeechPipeline, normalizeActPayload } from '@proj-airi/pipelines-audio'
+import { useIdlePersonalityStore } from '@proj-airi/stage-shared/personality'
 import { defaultLive2DMotionControlDynamics, Live2DScene, useLive2DMotionControl, useLive2dParams, useSettingsLive2d } from '@proj-airi/stage-ui-live2d'
 import { MMDScene } from '@proj-airi/stage-ui-mmd'
 import { SpineScene } from '@proj-airi/stage-ui-spine'
@@ -32,10 +34,11 @@ import { computed, nextTick, onMounted, onUnmounted, ref, shallowRef, watch } fr
 import StageRenderError from './stage-render-error.vue'
 
 import { useDuckDb } from '../../composables/use-duck-db'
+import { useIdlePersonalityCycler } from '../../composables/use-idle-personality-cycler'
 import { useIOTraceBridge } from '../../composables/use-io-trace-bridge'
 import { initIOTracer } from '../../composables/use-io-tracer'
 import { Emotion, EMOTION_EmotionMotionName_value, EMOTION_VRMExpressionName_value, EmotionThinkMotionName } from '../../constants/emotions'
-import { live2dMotionMagicProfiles, useLive2DMotionMagic, useLive2DMotionMagicSettings } from '../../features/motions/live2d'
+import { useLive2DMotionMagic, useLive2DMotionMagicSettings } from '../../features/motions/live2d'
 import { getDefinedProvider } from '../../libs/providers/providers'
 import { OFFICIAL_SPEECH_PROVIDER_ID, OFFICIAL_SPEECH_STREAMING_PROVIDER_ID } from '../../libs/providers/providers/official'
 import { bindSpeakingStateToPlaybackManager } from '../../libs/speech/playback-speaking-state'
@@ -93,30 +96,44 @@ const live2dMotionControl = useLive2DMotionControl()
 const { exclusiveOwnerId: live2dMotionControlOwnerId } = storeToRefs(live2dMotionControl)
 const {
   forceViewTarget: live2dMagicForceViewTarget,
-  profileId: live2dMagicProfileId,
   skipMouthOpen: live2dMagicSkipMouthOpen,
 } = storeToRefs(useLive2DMotionMagicSettings())
 const live2dMagicMotion = useLive2DMotionMagic({
-  dataset: () => live2dMotionMagicProfiles[live2dMagicProfileId.value].dataset,
   forceViewTarget: live2dMagicForceViewTarget,
   skipMouthOpen: live2dMagicSkipMouthOpen,
   disabled: () => live2dMotionControlOwnerId.value !== null,
   publishPose: pose => live2dMotionControl.setPose('stage:live2d-motion-magic', pose, defaultLive2DMotionControlDynamics),
   releasePose: () => live2dMotionControl.release('stage:live2d-motion-magic'),
 })
+const idlePersonalityStore = useIdlePersonalityStore()
+const { activePersonalityId } = storeToRefs(idlePersonalityStore)
 let live2dMagicActivationRequest = 0
+const currentLive2dMagicDatasetId = ref<string | null>(null)
 
 watch(
-  [stageModelRenderer, live2dMotionDriver, live2dMagicProfileId, () => props.paused, live2dMotionControlOwnerId],
-  async ([renderer, driver, , paused, controlOwnerId]) => {
+  [stageModelRenderer, live2dMotionDriver, activePersonalityId, () => props.paused, live2dMotionControlOwnerId],
+  async ([renderer, driver, personalityId, paused, controlOwnerId]) => {
     const request = ++live2dMagicActivationRequest
-    if (renderer !== 'live2d' || driver !== 'magic' || paused || controlOwnerId !== null) {
+    if (renderer !== 'live2d' || driver !== 'magic' || paused || controlOwnerId !== null || !personalityId) {
       live2dMagicMotion.stop()
       return
     }
 
-    if (live2dMagicMotion.status.value === 'idle')
-      await live2dMagicMotion.initialize()
+    if (currentLive2dMagicDatasetId.value !== personalityId || live2dMagicMotion.status.value === 'idle') {
+      let dataset: Live2DMotionRecording
+      try {
+        dataset = await idlePersonalityStore.loadDataset(personalityId)
+      }
+      catch (error) {
+        // The store disables a custom personality whose blob is missing or
+        // corrupt, so a failed load is expected to be swallowed here.
+        console.warn(`[Stage] Skipping idle personality "${personalityId}"`, error)
+        live2dMagicMotion.stop()
+        return
+      }
+      currentLive2dMagicDatasetId.value = personalityId
+      await live2dMagicMotion.initialize(dataset)
+    }
 
     if (
       request !== live2dMagicActivationRequest
@@ -124,6 +141,7 @@ watch(
       || live2dMotionDriver.value !== 'magic'
       || props.paused
       || live2dMotionControlOwnerId.value !== null
+      || activePersonalityId.value !== personalityId
     ) {
       return
     }
@@ -140,6 +158,14 @@ const {
   spineRenderScale,
 } = storeToRefs(settingsStore)
 const { mouthOpenSize, nowSpeaking } = storeToRefs(useSpeakingStore())
+const idlePersonalityCycler = useIdlePersonalityCycler({
+  paused: () => props.paused,
+  nowSpeaking,
+  motionControlOwnerId: live2dMotionControlOwnerId,
+  isIdle: () => !nowSpeaking.value,
+})
+onMounted(() => idlePersonalityCycler.start())
+onUnmounted(() => idlePersonalityCycler.stop())
 const disposePlaybackStateHandler = defineInvokeHandler(
   getSpeechBusContext(),
   speechOutputGetPlaybackState,
