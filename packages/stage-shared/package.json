@@ -36,6 +36,7 @@
   "dependencies": {
     "@moeru/std": "catalog:",
     "@vueuse/core": "catalog:",
+    "es-toolkit": "catalog:",
     "gpuu": "catalog:",
     "pinia": "catalog:",
     "valibot": "catalog:",
