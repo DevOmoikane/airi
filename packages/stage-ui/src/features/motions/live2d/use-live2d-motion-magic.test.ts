@@ -1,10 +1,12 @@
+import type { Live2DMotionRecording } from '@proj-airi/stage-shared/personality'
+
 import { neutralPose } from '@proj-airi/model-driver-magic-live2d'
 import { describe, expect, it, vi } from 'vitest'
 import { effectScope } from 'vue'
 
 import { useLive2DMotionMagic } from './index'
 
-function createDataset() {
+function createDataset(): Live2DMotionRecording {
   const samples = Array.from({ length: 180 }, (_, index) => {
     const phase = index / 30 * Math.PI * 2
     return {
@@ -15,6 +17,7 @@ function createDataset() {
     }
   })
   return {
+    format: 'airi-live2d-motion/v6',
     durationMs: samples.at(-1)!.atMs,
     samples,
   }
@@ -34,7 +37,7 @@ describe('live2d MAGIC motion', () => {
       random: () => 0.5,
     }))!
 
-    await motion.initialize()
+    await motion.initialize(createDataset())
     motion.randomizeSeed()
 
     expect(motion.status.value).toBe('ready')

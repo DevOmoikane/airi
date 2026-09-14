@@ -20,7 +20,7 @@ import Workbench from './components/workbench.vue'
 
 import { useSystemAudioLipSyncStore } from '../../../../stores/system-audio-lipsync'
 import { applyLive2DMotionViewTarget, defaultLive2DMotionViewTargetState } from '../../../motions/live2d'
-import { defaultLive2DMotionRecording } from './composables/default-recording'
+import { loadDefaultLive2DMotionRecording } from './composables/default-recording'
 import { createLive2DMotionId } from './composables/keyframes'
 import { useLive2DMotionRecording } from './composables/recording'
 
@@ -192,7 +192,6 @@ function updateEyeView(nextView: typeof eyeView.value) {
 const recordingController = useLive2DMotionRecording({
   applyPose: publishPose,
   releasePose: publishRelease,
-  initialRecording: defaultLive2DMotionRecording,
 })
 
 /**
@@ -245,6 +244,7 @@ onMounted(() => {
   window.addEventListener('pagehide', handlePageHide)
   motionControl.claimExclusiveControl(ownerId)
   motionControl.setBreath(ownerId, breathOptions.value, breathStartedAtMs.value)
+  void loadDefaultLive2DMotionRecording().then(recording => recordingController.loadRecording(recording))
 })
 
 function restartRecording() {
