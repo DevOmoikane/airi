@@ -217,6 +217,7 @@
     "@types/ws": "catalog:",
     "@unocss/reset": "catalog:",
     "@vitejs/plugin-vue": "catalog:",
+    "@vue/test-utils": "catalog:",
     "clustr": "catalog:",
     "csstype": "catalog:",
     "histoire": "catalog:",

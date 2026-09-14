@@ -28,6 +28,7 @@
     "./electron-renderer": "./src/electron-renderer.d.ts",
     "./composables": "./src/composables/index.ts",
     "./personality": "./src/personality/index.ts",
+    "./personality/testing": "./src/personality/testing/fake-idb.ts",
     "./webgpu": "./src/webgpu/index.ts"
   },
   "scripts": {

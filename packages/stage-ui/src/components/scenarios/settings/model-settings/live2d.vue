@@ -16,6 +16,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import MagicMotionSettings from '../../../../features/motions/live2d/components/magic-settings.vue'
+import IdlePersonalitySettings from './idle-personality-settings.vue'
 
 import { PropertyPoint } from '../../../data-pane'
 import { Section } from '../../../layouts'
@@ -436,6 +437,7 @@ function handleMotionSelect(selectedMotionPath: string | number | undefined) {
       </template>
     </FieldCombobox>
   </Section>
+  <IdlePersonalitySettings class="mt-4" />
   <Section
     :title="t('settings.live2d.parameters.title')"
     icon="i-solar:settings-bold-duotone"
