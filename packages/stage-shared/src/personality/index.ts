@@ -1,3 +1,4 @@
+export * from './catalog'
 export * from './motion-recording'
 export * from './persistence'
 export * from './select'

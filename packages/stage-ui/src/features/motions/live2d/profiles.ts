@@ -1,7 +1,10 @@
 import type { Pose } from '@proj-airi/model-driver-magic-live2d'
+import type {
+  IdlePersonalityId,
+  Live2DMotionRecording,
+} from '@proj-airi/stage-shared/personality'
 
-import idleCalmProject from './assets/idle-calm.json'
-import speakingExcitedProject from './assets/speaking-excited.json'
+import { bundledIdlePersonalityEntryById } from '@proj-airi/stage-shared/personality'
 
 /** One normalized Live2D pose in a MAGIC dataset. */
 export interface Live2DMotionMagicSample extends Pose {
@@ -24,26 +27,30 @@ export interface Live2DMotionMagicProfile {
   /** Stable value stored in Live2D settings. */
   id: string
   /** Dataset used to fit VAR or AR-HMM. */
-  dataset: Live2DMotionMagicDataset
+  dataset: Live2DMotionRecording
 }
 
-/** Bundled MAGIC profiles available to Live2D settings. */
+function legacyProfileDataset(id: IdlePersonalityId): Live2DMotionRecording {
+  const dataset = bundledIdlePersonalityEntryById[id].dataset
+  if (!dataset)
+    throw new Error(`Bundled personality "${id}" has no eager dataset.`)
+
+  return dataset
+}
+
+/**
+ * Bundled MAGIC profiles available to Live2D settings, sourced from the shared
+ * idle personality catalog. Only the two legacy recordings keep a synchronous
+ * dataset; generated personalities load lazily through the catalog.
+ */
 export const live2dMotionMagicProfiles = {
   'idle-calm': {
     id: 'idle-calm',
-    dataset: {
-      format: idleCalmProject.source.format as 'airi-live2d-motion/v6',
-      durationMs: idleCalmProject.source.durationMs,
-      samples: idleCalmProject.source.samples,
-    },
+    dataset: legacyProfileDataset('idle-calm'),
   },
   'speaking-excited': {
     id: 'speaking-excited',
-    dataset: {
-      format: speakingExcitedProject.source.format as 'airi-live2d-motion/v6',
-      durationMs: speakingExcitedProject.source.durationMs,
-      samples: speakingExcitedProject.source.samples,
-    },
+    dataset: legacyProfileDataset('speaking-excited'),
   },
 } as const satisfies Record<string, Live2DMotionMagicProfile>
 
