@@ -46,7 +46,7 @@ The desktop and web avatar currently show only one boring idle loop: balancing s
   settings section "Idle personality" (also used by VRM tab)
 
 [stage-ui-three] VRM wiring
-  createVrmIdleMotionPlayer: fit dataset, rAF loop, map normalized pose -> VRM bones/expressions
+  createVrmIdleMotionPlayer: fit dataset, hook-driven step, map normalized pose -> VRM bones/expressions
   VRMModel registers the player pose applier via setVrmFrameHook; pauses vrma loop while player is active
   reads activePersonalityId from the shared store, applies only when stageModelRenderer is 'vrm'
 ```
@@ -113,6 +113,7 @@ Persistence keys (new):
 - `settings/personality/idle-interval-ms`
 - `settings/personality/idle-randomize`
 - `settings/personality/idle-pinned`
+- `settings/personality/custom-personalities` (JSON array of the custom metadata entries)
 
 The old `settings/live2d/magic/profile` key is deprecated and ignored after this change. No migration is performed; a fresh install defaults to all bundled personalities enabled with random cycling on, and the first `activePersonalityId` is picked from the enabled set at mount. The previous single-profile choice is superseded by the library rather than preserved; this is a one-way, documented behavior change.
 
@@ -130,7 +131,7 @@ Actions:
 
 Small in-house IndexedDB wrapper (no new dependency; platform API) with one object store `idle-personality-datasets` keyed by dataset id, storing the JSON-serialized recording. Methods: `getId`, `putId`, `deleteId`. Bundled datasets are never written to IndexedDB; they are code assets.
 
-Custom datasets load lazily from IndexedDB when the cycler selects them as `activePersonalityId`; the in-memory store only keeps the metadata (`customPersonalities`) until selection time. If a stored blob is missing or corrupt, the personality is treated as disabled for the session and logged.
+Custom datasets load lazily from IndexedDB when the cycler selects them as `activePersonalityId`; the in-memory store only keeps the metadata (`customPersonalities`) until selection time. The metadata list itself persists in localStorage under `settings/personality/custom-personalities` for tiny synchronous reads. If a stored blob is missing or corrupt, the personality is treated as disabled for the session and logged.
 
 Rationale for IndexedDB over localStorage: v6 recordings are ~300-800 KB each, and several custom imports would exceed the localStorage quota. Metadata stays in localStorage for tiny synchronous reads.
 
@@ -193,14 +194,14 @@ The magic personality library does not change the universal driver path. Univers
 
   - Inputs: `dataset: Live2DMotionRecording` (from the shared catalog), `vrm: VRM`, options for amplitude scales and smoothing.
   - Builds a MAGIC generator via `fit(toVrmTrainingSequence(dataset), { method: 'var', order: 20, ridge: 0.001 })` from `@proj-airi/motion-driver-magic` (new dependency for this package; it is pure math with only `es-toolkit`).
-  - rAF loop evaluating generated frames, converting each normalized `Pose` to VRM transforms:
+  - The pose generator is stepped by the existing per-frame runtime hook (`setVrmFrameHook`) so newly generated poses apply before `humanoid.update()` in the frame loop; there is no separate interval scheduling in the player. `step()` produces one frame; `setEnabled`/`dispose` own the lifecycle.
     - `headX`/`headY`/`headZ` → head bone local Euler (yaw up to ~25 deg, pitch up to ~20 deg, roll up to ~15 deg), spring-smoothed.
     - `bodyX`/`bodyY`/`bodyZ` → chest/spine/hips composite rotation (up to ~10 deg), applied to normalized bones before `humanoid.update()`.
     - `eyeX`/`eyeY` → added to the existing lookAt target (`vrm.lookAt.target.position`) as a small offset scaled by personality amplitude; composes with `useIdleEyeSaccades`.
     - `eyeSquint` → gentler than blink; applied as an additive factor on `expressionManager` blink-ish slot only when the model has it, clamped so `useBlink` still wins during full blinks.
     - `mouthOpen`/`mouthForm` → expression lookup (`'aa'`, `'fun'`) if the model exposes such expression preset names; skipped gracefully otherwise.
     - `offsetY` → subtle whole-body vertical bounce added to the group position (+/- a few percent of model height); `offsetX` ignored in v1 to avoid drift.
-  - `setEnabled(node: VRM | undefined)` starts/stops the loop; `dispose()` clears the rAF and resets applied poses.
+  - `setEnabled(node: VRM | undefined)` starts/stops generating poses; `dispose()` unregisters the pose applier and resets applied poses.
 - New dependency: `@proj-airi/motion-driver-magic` in `packages/stage-ui-three/package.json`. No Live2D package is imported by stage-ui-three; `toVrmTrainingSequence` maps the neutral v6 sample field names directly to the shared magic frame arrays (the v6 samples and the magic `Pose` share the same 13 normalized axes).
 
 ### VRMModel.vue wiring
