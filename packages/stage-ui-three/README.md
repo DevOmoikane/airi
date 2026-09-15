@@ -15,7 +15,7 @@ Three.js runtime components, stores, composables, and diagnostics used by AIRI s
 - `ThreeScene`: the main Three-backed stage component.
 - `useModelStore`: Pinia store for Three scene and model configuration.
 - `@proj-airi/stage-ui-three/trace`: local Eventa trace bus and snapshot helpers.
-- `@proj-airi/stage-ui-three/composables/vrm`: VRM loading and animation helpers.
+- `@proj-airi/stage-ui-three/composables/vrm`: VRM loading, animation, and idle personality helpers.
 - `@proj-airi/stage-ui-three/utils/vrm-preview`: one-off VRM preview rendering.
 - `composables/hit-test` and `composables/render-target`: renderer readback helpers.
 
@@ -37,6 +37,20 @@ This keeps ordinary remounts and HMR from immediately forcing deep VRM disposal,
 `ThreeScene` receives the `AudioContext` and current audio source from its caller. The package does not import the Stage audio store.
 
 The shared driver produces AEIOU weights. The VRM adapter maps these weights to `aa`, `ee`, `ih`, `oh`, and `ou` expressions.
+
+## Idle Personality Boundary
+
+`composables/vrm/personality-idle` plays an idle personality recording as subtle, non-looping motion.
+
+- `VRM_IDLE_PERSONALITY_AXES` is the ordered channel model shared with the Live2D personality playback, so a recording stays comparable across renderers.
+- `toVrmTrainingSequence` resamples a v6 recording onto a fixed time grid; the driver fits a MAGIC variant model, then generates and clamps each frame before the neck, spine, eye-target, and expression channels are applied.
+- `createVrmIdleMotionPlayer` steps a generator behind a short gain ramp so motion fades in and out without pops.
+
+`composables/vrm/personality-idle-director` (`createPersonalityIdleVrmDirector`) owns activation gating for `VRMModel`:
+
+- It watches the shared idle personality store and the model refs. While a personality is selected and the model is not paused, it pauses the idle VRMA clip and installs a composed frame hook that runs the external runtime hook first and the generator step last, immediately before `humanoid.update()`.
+- When the personality is cleared, the player is disposed and the idle VRMA clip resumes.
+- External callers keep registering their runtime hook through `setVrmFrameHook`; the hooks are recomposed onto the personality chain rather than replaced.
 
 ## Scene Lifecycle
 
@@ -93,6 +107,7 @@ The trace bus is intentionally local to `stage-ui-three`. Desktop apps can bridg
 - Use `useModelStore` when the page needs to control camera, lighting, model transforms, or renderer-facing state.
 - Use `@proj-airi/stage-ui-three/trace` when you need Three/VRM runtime telemetry without routing through Vue parent chains.
 - Use `utils/vrm-preview` for isolated preview rendering that should not participate in the main stage lifecycle.
+- Use `composables/vrm/personality-idle-director` when a VRM model should react to the shared idle personality store without manual store tracking.
 
 ## When Not To Use It
 
