@@ -30,6 +30,7 @@
     "@pixiv/three-vrm-animation": "catalog:",
     "@pixiv/three-vrm-core": "catalog:",
     "@proj-airi/model-driver-lipsync": "workspace:*",
+    "@proj-airi/motion-driver-magic": "workspace:*",
     "@proj-airi/stage-shared": "workspace:*",
     "@proj-airi/ui": "workspace:*",
     "@tresjs/cientos": "catalog:",
