@@ -27,6 +27,16 @@ Existing `speech-noop` selections are preserved because they may represent
 intentional silence. Users can explicitly choose **Inherit global settings**
 in the editor; importing or saving an unrelated card field does not change it.
 
+## Idle Personality Boundary
+
+`Stage.vue` consumes the shared idle personality store (`@proj-airi/stage-shared/personality`).
+
+- It reads `useIdlePersonalityStore().activePersonalityId`, loads the matching `airi-live2d-motion/v6` recording, and feeds it to `useLive2DMotionMagic` (`src/features/motions/live2d/`) as its dataset, so the Live2D surface and the VRM surface react to the same store value.
+- `useIdlePersonalityCycler` (`src/composables/use-idle-personality-cycler.ts`) gated on the store's enabled list and interval randomly advances the active personality without immediate repeats.
+- Settings pages use `IdlePersonalitySettings` (`src/components/scenarios/settings/model-settings/idle-personality-settings.vue`) to pick a personality for the selected model, enable/disable randomization, configure the interval, and import/remove custom recordings.
+
+The personality module is deliberately narrow: it owns only non-looping, personality-specific expression. All continuous behaviors (lip-sync, eye saccades, blinking, and gaze) remain in the Live2D model driver and mixer so they can compose independently.
+
 ## Button analytics
 
 Register the shared plugin once in each Vue application:
