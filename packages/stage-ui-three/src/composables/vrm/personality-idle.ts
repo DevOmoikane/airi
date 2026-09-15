@@ -1,9 +1,10 @@
 import type { VRM } from '@pixiv/three-vrm'
 import type { MagicModel, TrainingSequence, VarFitOptions } from '@proj-airi/motion-driver-magic'
 import type { ReadonlyLive2DMotionRecording } from '@proj-airi/stage-shared/personality'
+import type { Vector3 } from 'three'
 
 import { fit } from '@proj-airi/motion-driver-magic'
-import { Object3D, Vector3 } from 'three'
+import { Object3D } from 'three'
 
 /** Ordered channels shared by MAGIC generated frames and v6 recordings. */
 export const VRM_IDLE_PERSONALITY_AXES = [
