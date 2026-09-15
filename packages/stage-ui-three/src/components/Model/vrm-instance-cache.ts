@@ -1,5 +1,5 @@
 import type { VRM } from '@pixiv/three-vrm'
-import type { AnimationMixer, Group } from 'three'
+import type { AnimationClip, AnimationMixer, Group } from 'three'
 
 import type { useVRMEmote } from '../../composables/vrm/expression'
 import type { VrmInteractionColliderSet } from '../../composables/vrm/interaction'
@@ -8,6 +8,8 @@ import { getStageThreeRuntimeTraceContext, isStageThreeRuntimeTraceEnabled } fro
 import { stageThreeTraceVrmCacheEvent } from '../../trace/eventa'
 
 export interface ManagedVrmInstance {
+  /** The VRMA idle clip bound to the model, absent when the model has no animation. */
+  animationClip?: AnimationClip
   emote: ReturnType<typeof useVRMEmote>
   group: Group
   interactionColliders: VrmInteractionColliderSet

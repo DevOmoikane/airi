@@ -8,6 +8,7 @@
 
 import type { VRM } from '@pixiv/three-vrm'
 import type {
+  AnimationClip,
   Group,
   Material,
   Object3D,
@@ -18,19 +19,15 @@ import type {
   WebGLRenderer,
 } from 'three'
 
-import type {
-  VrmDisposeHookContext,
-  VrmFrameHookContext,
-  VrmHook,
-  VrmLoadHookContext,
-  VrmMaterialHookContext,
-} from '../../composables/vrm/hooks'
+import type { VrmDisposeHookContext, VrmFrameHookContext, VrmHook, VrmLoadHookContext, VrmMaterialHookContext } from '../../composables/vrm/hooks'
 import type { VrmInteractionColliderSet } from '../../composables/vrm/interaction'
+import type { PersonalityIdleVrmFrameHook } from '../../composables/vrm/personality-idle-director'
 import type { SceneBootstrap, TrackingMode, Vec3 } from '../../stores/model-store'
 import type { VrmLifecycleReason } from '../../trace'
 import type { ManagedVrmInstance } from './vrm-instance-cache'
 
 import { VRMUtils } from '@pixiv/three-vrm'
+import { useIdlePersonalityStore } from '@proj-airi/stage-shared/personality'
 import { useLoop, useTresContext } from '@tresjs/core'
 import { until } from '@vueuse/core'
 import {
@@ -78,6 +75,8 @@ import { useVRMEmote } from '../../composables/vrm/expression'
 import { createVrmInteractionColliders } from '../../composables/vrm/interaction'
 import { resolveInternalVrmHooks } from '../../composables/vrm/internal-hooks'
 import { useVRMLipSync } from '../../composables/vrm/lip-sync'
+import { createVrmIdleMotionPlayer } from '../../composables/vrm/personality-idle'
+import { createPersonalityIdleVrmDirector } from '../../composables/vrm/personality-idle-director'
 import {
   createThreeRendererMemorySnapshot,
   createVrmSceneSummarySnapshot,
@@ -189,10 +188,47 @@ const raycaster = new Raycaster()
 const vrmAnimationMixer = ref<AnimationMixer>()
 const { onBeforeRender, stop, start } = useLoop()
 
+// The VRMA idle clip bound to the current model, reused to resume the idle
+// animation when the personality generator releases the model.
+const vrmIdleVrmaClip = ref<AnimationClip>()
+
 const vrmHooks: readonly VrmHook[] = resolveInternalVrmHooks()
 type VrmFrameRuntimeHook = (vrm: VRM, delta: number) => void
 const vrmFrameRuntimeHook = shallowRef<VrmFrameRuntimeHook>()
 let disposeBeforeRenderLoop: (() => void | undefined) | undefined
+
+// The pre-personality runtime hook set by external callers (e.g. eye tracking).
+// The director chains it ahead of the personality generator step.
+const previousVrmFrameRuntimeHook = shallowRef<PersonalityIdleVrmFrameHook>()
+
+const idlePersonalityStore = useIdlePersonalityStore()
+
+const idlePersonalityDirector = createPersonalityIdleVrmDirector({
+  vrm: () => vrm.value,
+  idleClip: () => vrmIdleVrmaClip.value,
+  mixer: () => vrmAnimationMixer.value,
+  activePersonalityId: () => idlePersonalityStore.activePersonalityId,
+  paused: () => paused.value,
+  loadDataset: id => idlePersonalityStore.loadDataset(id),
+  runtimeHook: {
+    get: () => vrmFrameRuntimeHook.value,
+    set: (hook) => {
+      vrmFrameRuntimeHook.value = hook
+    },
+  },
+  externalHook: {
+    get: () => previousVrmFrameRuntimeHook.value,
+  },
+  createPlayer: recording => createVrmIdleMotionPlayer({ dataset: recording }),
+})
+
+watch(
+  [vrm, () => idlePersonalityStore.activePersonalityId, () => paused.value],
+  () => {
+    void idlePersonalityDirector.sync()
+  },
+  { flush: 'sync' },
+)
 
 // material type with optional update function for per-frame update, used for three-vrm's MToon material and custom shader materials with IBL injection
 type UpdatableMaterial = Material & {
@@ -299,6 +335,7 @@ function getActiveManagedVrmInstance() {
     return undefined
 
   return createManagedVrmInstance({
+    animationClip: vrmIdleVrmaClip.value,
     emote: vrmEmote.value,
     group: vrmGroup.value,
     interactionColliders: interactionColliders.value!,
@@ -313,6 +350,7 @@ function clearActiveManagedVrmRefs() {
   vrm.value = undefined
   vrmGroup.value = undefined
   interactionColliders.value = undefined
+  vrmIdleVrmaClip.value = undefined
 }
 
 function applyModelTransform(group: Group) {
@@ -333,6 +371,7 @@ function applyManagedVrmInstance(instance: ManagedVrmInstance) {
   vrmAnimationMixer.value = instance.mixer
   vrmEmote.value = instance.emote
   interactionColliders.value = instance.interactionColliders
+  vrmIdleVrmaClip.value = instance.animationClip
 }
 
 function destroyManagedVrmInstance(instance?: ManagedVrmInstance) {
@@ -885,6 +924,7 @@ async function loadModel() {
     const nextInteractionColliders = createVrmInteractionColliders(_vrm)
 
     commitManagedVrmInstance(createManagedVrmInstance({
+      animationClip: clip,
       emote: nextVrmEmote,
       group: _vrmGroup,
       interactionColliders: nextInteractionColliders,
@@ -1023,12 +1063,14 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  idlePersonalityDirector.dispose()
   componentCleanUp('component-unmount')
 })
 
 if (import.meta.hot) {
   // Ensure cleanup on HMR
   import.meta.hot.dispose(() => {
+    idlePersonalityDirector.dispose()
     componentCleanUp('manual-reload')
   })
 }
@@ -1042,7 +1084,8 @@ defineExpose({
   // External callers use it for live pose/tracking input; internal hooks remain reserved for
   // stage-ui-three's own model/material lifecycle extensions.
   setVrmFrameHook(hook?: VrmFrameRuntimeHook) {
-    vrmFrameRuntimeHook.value = hook
+    previousVrmFrameRuntimeHook.value = hook
+    idlePersonalityDirector.setExternalHook()
   },
   scene: computed(() => vrm.value?.scene),
   lookAtUpdate(target: Vec3) {

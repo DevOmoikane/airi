@@ -2,11 +2,12 @@ import type { VRM } from '@pixiv/three-vrm'
 import type { Live2DMotionRecording } from '@proj-airi/stage-shared/personality'
 
 import { describe, expect, it, vi } from 'vitest'
+
 import {
   createVrmIdleMotionPlayer,
-  vrmIdlePersonalityPoseFromValues,
   toVrmTrainingSequence,
   VRM_IDLE_PERSONALITY_AXES,
+  vrmIdlePersonalityPoseFromValues,
 } from './personality-idle'
 
 const mockRecording: Live2DMotionRecording = {
