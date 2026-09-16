@@ -1839,6 +1839,16 @@ vrm:
   skybox:
     skybox-intensity: SkyBox Intensity
     skybox-specular-mix: Specular Mix
+  idle-animation:
+    title: Idle Animations
+    description: Choose which idle animations cycle while the model rests.
+    bundled-title: Bundled
+    custom-title: Imported
+    import: Import VRMA file
+    import-error: Invalid VRMA file. Only .vrma files are supported.
+    imported-at: Imported {date}
+    remove: Remove
+    reset-to-defaults: Reset to defaults
 spine:
   title: Spine Settings
   scale-and-position:

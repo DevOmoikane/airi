@@ -1663,6 +1663,16 @@ vrm:
   skybox:
     skybox-intensity: スカイボックスの強度
     skybox-specular-mix: 鏡面反射の混合
+  idle-animation:
+    title: アイドルアニメーション
+    description: モデルが待機中に再生するアイドルアニメーションを選択します。
+    bundled-title: 内蔵
+    custom-title: インポート済み
+    import: VRMA ファイルをインポート
+    import-error: 無効な VRMA ファイルです。.vrma ファイルのみ対応しています。
+    imported-at: インポート日 {date}
+    remove: 削除
+    reset-to-defaults: デフォルトに戻す
 spine:
   title: Spine Settings
   scale-and-position:

@@ -8,8 +8,10 @@ import { getStageThreeRuntimeTraceContext, isStageThreeRuntimeTraceEnabled } fro
 import { stageThreeTraceVrmCacheEvent } from '../../trace/eventa'
 
 export interface ManagedVrmInstance {
-  /** The VRMA idle clip bound to the model, absent when the model has no animation. */
+  /** The active VRMA idle clip bound to the model, absent when the model has no animation. */
   animationClip?: AnimationClip
+  /** All VRMA idle clips available for the idle cycler, including the active one. */
+  idleClips?: AnimationClip[]
   emote: ReturnType<typeof useVRMEmote>
   group: Group
   interactionColliders: VrmInteractionColliderSet

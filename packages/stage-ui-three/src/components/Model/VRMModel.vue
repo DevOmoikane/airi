@@ -72,6 +72,7 @@ import {
 } from '../../composables/vrm/animation'
 import { loadVrm } from '../../composables/vrm/core'
 import { useVRMEmote } from '../../composables/vrm/expression'
+import { createVrmIdleCycler } from '../../composables/vrm/idle-cycler'
 import { createVrmInteractionColliders } from '../../composables/vrm/interaction'
 import { resolveInternalVrmHooks } from '../../composables/vrm/internal-hooks'
 import { useVRMLipSync } from '../../composables/vrm/lip-sync'
@@ -118,6 +119,11 @@ const props = withDefaults(defineProps<{
   modelId: string
   modelSrc?: string
   idleAnimation: string
+  /**
+   * Idle clips to cycle through. When empty, `idleAnimation` is used as a
+   * single static idle. The cycler crossfades between clips on a timer.
+   */
+  idleAnimations?: string[]
   // loadAnimations?: string[]
   paused?: boolean
 
@@ -159,6 +165,7 @@ const {
   modelId,
   modelSrc,
   idleAnimation,
+  idleAnimations,
   // loadAnimations, // TBC
   paused,
 
@@ -188,9 +195,19 @@ const raycaster = new Raycaster()
 const vrmAnimationMixer = ref<AnimationMixer>()
 const { onBeforeRender, stop, start } = useLoop()
 
+// All VRMA idle clips loaded for the current model, including the active one.
+const vrmIdleClips = ref<AnimationClip[]>([])
+
 // The VRMA idle clip bound to the current model, reused to resume the idle
 // animation when the personality generator releases the model.
 const vrmIdleVrmaClip = ref<AnimationClip>()
+
+const vrmIdleCycler = createVrmIdleCycler({
+  mixer: () => vrmAnimationMixer.value,
+  onClipChange: (clip) => {
+    vrmIdleVrmaClip.value = clip
+  },
+})
 
 const vrmHooks: readonly VrmHook[] = resolveInternalVrmHooks()
 type VrmFrameRuntimeHook = (vrm: VRM, delta: number) => void
@@ -336,6 +353,7 @@ function getActiveManagedVrmInstance() {
 
   return createManagedVrmInstance({
     animationClip: vrmIdleVrmaClip.value,
+    idleClips: vrmIdleClips.value,
     emote: vrmEmote.value,
     group: vrmGroup.value,
     interactionColliders: interactionColliders.value!,
@@ -351,6 +369,7 @@ function clearActiveManagedVrmRefs() {
   vrmGroup.value = undefined
   interactionColliders.value = undefined
   vrmIdleVrmaClip.value = undefined
+  vrmIdleClips.value = []
 }
 
 function applyModelTransform(group: Group) {
@@ -372,6 +391,9 @@ function applyManagedVrmInstance(instance: ManagedVrmInstance) {
   vrmEmote.value = instance.emote
   interactionColliders.value = instance.interactionColliders
   vrmIdleVrmaClip.value = instance.animationClip
+  // Restore the idle clip pool so the cycler keeps cycling across reloads.
+  vrmIdleClips.value = instance.idleClips ?? []
+  vrmIdleCycler.setClips(vrmIdleClips.value, instance.animationClip)
 }
 
 function destroyManagedVrmInstance(instance?: ManagedVrmInstance) {
@@ -395,6 +417,78 @@ function isManagedVrmInstanceReusable(instance: ManagedVrmInstance) {
     return false
   }
 }
+
+let lastAppliedIdleUrls: string[] = []
+let reseedSequence = 0
+
+function sameUrls(a: string[], b: string[]) {
+  if (a.length !== b.length)
+    return false
+  return a.every((val, i) => val === b[i])
+}
+
+async function reseedIdleAnimations(urls: string[]) {
+  const activeVrm = vrm.value
+  const activeMixer = vrmAnimationMixer.value
+  if (!activeVrm || !activeMixer)
+    return
+
+  reseedSequence++
+  const seq = reseedSequence
+
+  const clips: AnimationClip[] = []
+  for (const url of urls) {
+    try {
+      const animation = await loadVRMAnimation(url)
+      if (reseedSequence !== seq || vrm.value !== activeVrm)
+        return
+
+      const clip = await clipFromVRMAnimation(activeVrm, animation)
+      if (reseedSequence !== seq || vrm.value !== activeVrm)
+        return
+
+      if (clip) {
+        reAnchorRootPositionTrack(clip, activeVrm)
+        clips.push(clip)
+      }
+    }
+    catch (e) {
+      console.warn(`Failed to load idle animation clip from ${url}:`, e)
+    }
+  }
+
+  if (clips.length === 0) {
+    console.warn('Reseeding yielded zero valid animation clips.')
+    return
+  }
+
+  activeMixer.stopAllAction()
+  const firstClip = clips[0]
+  activeMixer.clipAction(firstClip).play()
+
+  vrmIdleClips.value = clips
+  vrmIdleVrmaClip.value = firstClip
+  vrmIdleCycler.setClips(clips, firstClip)
+
+  const instance = getActiveManagedVrmInstance()
+  if (instance) {
+    instance.idleClips = clips
+    instance.animationClip = firstClip
+  }
+}
+
+watch(
+  () => idleAnimations.value?.length ? idleAnimations.value : [idleAnimation.value],
+  (nextUrls) => {
+    if (!vrm.value)
+      return
+    if (sameUrls(nextUrls, lastAppliedIdleUrls))
+      return
+    lastAppliedIdleUrls = [...nextUrls]
+    void reseedIdleAnimations(nextUrls)
+  },
+  { deep: true },
+)
 
 function shouldDestroyVrmResources(reason: VrmLifecycleReason) {
   return reason === 'model-switch'
@@ -492,6 +586,7 @@ function bindManagedVrmInstanceRenderLoop() {
 
     const animationMixerMs = measureFrameStep(tracingEnabled, () => {
       vrmAnimationMixer.value?.update(delta)
+      vrmIdleCycler.step(delta)
     })
     const activeVrm = vrm.value
     const activeVrmGroup = vrmGroup.value
@@ -834,13 +929,28 @@ async function loadModel() {
     /*
       * Animation setting
     */
-    const animation = await loadVRMAnimation(idleAnimation.value)
-    const clip = await clipFromVRMAnimation(_vrm, animation)
-    if (!isLoadRequestCurrent(requestId)) {
-      disposeDetachedVrm(nextVrm, nextVrmGroup)
-      return
+    const idleAnimationUrls = idleAnimations.value?.length ? idleAnimations.value : [idleAnimation.value]
+    const clips: AnimationClip[] = []
+    for (const animationUrl of idleAnimationUrls) {
+      const animation = await loadVRMAnimation(animationUrl)
+      if (!isLoadRequestCurrent(requestId)) {
+        disposeDetachedVrm(nextVrm, nextVrmGroup)
+        return
+      }
+      const clip = await clipFromVRMAnimation(_vrm, animation)
+      if (!isLoadRequestCurrent(requestId)) {
+        disposeDetachedVrm(nextVrm, nextVrmGroup)
+        return
+      }
+      if (!clip) {
+        console.warn(`No VRMA animation loaded from ${animationUrl}`)
+        continue
+      }
+      // Re-anchor the root position track to the model origin
+      reAnchorRootPositionTrack(clip, _vrm)
+      clips.push(clip)
     }
-    if (!clip) {
+    if (clips.length === 0) {
       disposeDetachedVrm(nextVrm, nextVrmGroup)
       emitVrmLoadError(currentLoadReason, loadStartedAt, 'No VRM animation loaded')
       console.warn('No VRM animation loaded')
@@ -848,12 +958,17 @@ async function loadModel() {
         emit('error', new Error('No VRM animation loaded'))
       return
     }
-    // Re-anchor the root position track to the model origin
-    reAnchorRootPositionTrack(clip, _vrm)
 
     // play animation
+    const firstClip = clips[0]
     nextVrmAnimationMixer = new AnimationMixer(_vrm.scene)
-    nextVrmAnimationMixer.clipAction(clip).play()
+    nextVrmAnimationMixer.clipAction(firstClip).play()
+
+    // Seed the idle clip pool and replay the switch decision tracker.
+    vrmIdleClips.value = clips
+    vrmIdleVrmaClip.value = firstClip
+    vrmIdleCycler.setClips(clips, firstClip)
+    lastAppliedIdleUrls = [...idleAnimationUrls]
 
     nextVrmEmote = useVRMEmote(_vrm)
 
@@ -924,7 +1039,8 @@ async function loadModel() {
     const nextInteractionColliders = createVrmInteractionColliders(_vrm)
 
     commitManagedVrmInstance(createManagedVrmInstance({
-      animationClip: clip,
+      animationClip: firstClip,
+      idleClips: clips,
       emote: nextVrmEmote,
       group: _vrmGroup,
       interactionColliders: nextInteractionColliders,
