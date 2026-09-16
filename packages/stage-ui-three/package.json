@@ -47,6 +47,7 @@
   "devDependencies": {
     "@types/culori": "catalog:",
     "@types/three": "catalog:",
+    "jsdom": "catalog:",
     "vitest": "catalog:vitest",
     "vue-tsc": "catalog:"
   }

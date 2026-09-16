@@ -39,11 +39,11 @@ import { computed, nextTick, onMounted, onUnmounted, provide, ref, shallowRef, u
 
 import PresenceBubble from './presence-bubble.vue'
 
-// From stage-ui-three package
 import { useRenderTargetRegionAtClientPoint } from '../composables/render-target'
 import { getVrmInteractionTargetFromObjectName, isClickLikePointerGesture } from '../composables/vrm/interaction'
 // pinia store
 import { useModelStore } from '../stores/model-store'
+import { useVrmIdleAnimationStore } from '../stores/vrm-idle-animation'
 import {
   getStageThreeRuntimeTraceContext,
   isStageThreeRuntimeTraceEnabled,
@@ -92,6 +92,11 @@ const props = withDefaults(defineProps<{
   enableOrbitControls?: boolean
   showAxes?: boolean
   idleAnimation?: string
+  /**
+   * Idle VRMA clips to cycle through. Defaults to the enabled clips in `vrmIdleAnimationStore`.
+   * When empty, `idleAnimation` is used as a single static idle.
+   */
+  idleAnimations?: string[]
   paused?: boolean
 }>(), {
   presence: () => presenceBubbleIdle,
@@ -142,6 +147,11 @@ provide(presenceBubblePaletteKey, (): PresenceBubblePalette => ({
   badge: readPresenceProbe(presenceBadgeProbe.value, presenceFallbackPalette.badge),
   badgeInk: readPresenceProbe(presenceBadgeInkProbe.value, presenceFallbackPalette.badgeInk),
 }))
+
+const vrmIdleAnimationStore = useVrmIdleAnimationStore()
+const effectiveIdleAnimations = computed(() =>
+  props.idleAnimations?.length ? props.idleAnimations : vrmIdleAnimationStore.enabledClipUrls,
+)
 
 type ModelPhase = 'no-model' | 'loading' | 'ready' | 'error'
 interface ModelLoadIdentity {
@@ -1064,6 +1074,7 @@ defineExpose({
         :model-id="requestedModelIdentity?.modelId ?? props.modelId"
         :model-src="requestedModelIdentity?.modelSrc"
         :idle-animation="props.idleAnimation"
+        :idle-animations="effectiveIdleAnimations"
         :paused="props.paused"
         :env-select="envSelect"
         :sky-box-intensity="skyBoxIntensity"

@@ -8,6 +8,7 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import IdlePersonalitySettings from './idle-personality-settings.vue'
+import VrmIdleAnimationSettings from './vrm-idle-animation-settings.vue'
 
 import { Container, PropertyColor, PropertyNumber, PropertyPoint } from '../../../data-pane'
 import { ColorPalette } from '../../../widgets'
@@ -262,4 +263,5 @@ const envOptions = computed(() => [
     </Callout>
   </Container>
   <IdlePersonalitySettings class="mt-4" />
+  <VrmIdleAnimationSettings class="mt-4" />
 </template>
