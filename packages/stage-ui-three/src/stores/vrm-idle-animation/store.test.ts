@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { createPinia, setActivePinia } from 'pinia'
+import { createPinia, disposePinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { nextTick } from 'vue'
 
@@ -17,12 +17,54 @@ async function importStore() {
   return useVrmIdleAnimationStore()
 }
 
+/**
+ * Creates the store inside a mounted component, like the app does. VueUse's
+ * `useStorage` attaches its window storage listeners in `onMounted`, so a
+ * store built outside a component never receives cross-window events.
+ */
+/**
+ * Creates the store inside a mounted component, like the app does. VueUse's
+ * `useStorage` attaches its window storage listeners in `onMounted`, so a
+ * store built outside a component never receives cross-window events.
+ */
+async function importStoreInMountedContext() {
+  const { useVrmIdleAnimationStore } = await import('./store')
+  const { createApp, defineComponent, h } = await import('vue')
+  let captured: ReturnType<typeof useVrmIdleAnimationStore> | undefined
+  const host = createApp(defineComponent({
+    setup() {
+      captured = useVrmIdleAnimationStore()
+      return () => h('div')
+    },
+  }))
+  const el = document.createElement('div')
+  document.body.appendChild(el)
+  host.mount(el)
+  const store = captured!
+  return {
+    store,
+    unmount: () => host.unmount(),
+  }
+}
+
 describe('useVrmIdleAnimationStore', () => {
+  let activePinia: ReturnType<typeof createPinia>
+
   beforeEach(() => {
+    // ROOT CAUSE:
+    //
+    // VueUse's `useStorage` listener on the shared window unregisters only
+    // when the owning effect scope stops. A stale store from a previous test
+    // reacts to the next test's writes, finds no blob in its fake IndexedDB,
+    // and disables the id into the live store. `disposePinia` stops that
+    // scope.
+    if (activePinia)
+      disposePinia(activePinia)
+    activePinia = createPinia()
+    setActivePinia(activePinia)
     vi.stubGlobal('indexedDB', createFakeBlobIdb())
     localStorage.clear()
     vi.resetModules()
-    setActivePinia(createPinia())
   })
 
   it('defaults to only the calm idle loop enabled', async () => {
@@ -147,6 +189,51 @@ describe('useVrmIdleAnimationStore', () => {
     const secondId = await second.importClip(new File(['bytes-b'], 'second.vrma', { type: 'application/octet-stream' }))
     expect(second.customClips).toHaveLength(2)
     expect(second.enabledIds).toContain(secondId)
+  })
+
+  // ROOT CAUSE:
+  //
+  // The store hydrated blobs once at creation. The desktop app runs settings
+  // in a separate window: the stage window's store already existed, so
+  // imported metadata arrived but its blob never became an object URL, and
+  // `enabledClipUrls` skipped the clip. The watcher re-hydrates on the
+  // late-arriving `storage` event.
+  it('hydrates a blob for metadata that arrives after store creation', async () => {
+    const { store, unmount } = await importStoreInMountedContext()
+    expect(store.customClips).toEqual([])
+
+    // Simulate the settings window: it wrote the blob into the shared IndexedDB
+    // and published the metadata through localStorage. A second window's write
+    // surfaces here as a `storage` event on the shared window; the store must
+    // pick the metadata up from that event.
+    const db = createVrmIdleAnimationBlobDb()
+    const foreignId = 'custom-foreign-clip'
+    await db.putBlob(foreignId, new File(['foreign-bytes'], 'foreign.vrma', { type: 'application/octet-stream' }))
+    const key = 'settings/vrm/idle-animation/custom-clips'
+    localStorage.setItem(key, JSON.stringify([{ id: foreignId, name: 'foreign', importedAt: Date.now() }]))
+    window.dispatchEvent(new StorageEvent('storage', {
+      key,
+      newValue: localStorage.getItem(key),
+      // VueUse ignores storage events whose storageArea differs from the
+      // instance's storage, so the simulated event must carry the real one.
+      storageArea: localStorage,
+    }))
+
+    try {
+      await vi.waitFor(() => {
+        expect(store.customClips).toHaveLength(1)
+        expect(store.customBlobUrls[foreignId]).toBe('blob:custom-url')
+      })
+
+      // Enabling the late-arriving clip resolves its URL without a manual
+      // hydrate() call.
+      store.setEnabled(foreignId, true)
+      await nextTick()
+      expect(store.enabledClipUrls).toContain('blob:custom-url')
+    }
+    finally {
+      unmount()
+    }
   })
 
   it('resets to defaults, clearing custom clips and restoring idle loop', async () => {
