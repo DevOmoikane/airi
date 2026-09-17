@@ -104,7 +104,7 @@ describe('vrm idle personality player helpers', () => {
     expect(output.mouthOpen).toBe(0)
   })
 
-  it('createVrmIdleMotionPlayer advancing steps and handles transitions cleanly', () => {
+  it('createVrmIdleMotionPlayer ramps the pose in, keeps stepping while active, and ramps out on disable', () => {
     const appliedPoses: any[] = []
     const applyPoseToVrm = vi.fn((pose) => {
       appliedPoses.push({ ...pose })
@@ -149,9 +149,10 @@ describe('vrm idle personality player helpers', () => {
     player.step()
     expect(applyPoseToVrm).not.toHaveBeenCalled()
 
+    // Only the humanoid shape the default applier reads matters here.
     const fakeVrm = {
       humanoid: {},
-    } as unknown as VRM
+    } as VRM
 
     // Enable player
     player.setEnabled(fakeVrm)
@@ -170,13 +171,27 @@ describe('vrm idle personality player helpers', () => {
     }
     expect(appliedPoses[11].eyeX).toBeCloseTo(0.5, 4)
 
-    // Disable player
+    // Disable player: release is deferred until the gain ramp-out finishes so
+    // the pose eases back to the clip-driven baseline instead of snapping.
     player.setEnabled(undefined)
+    expect(releasePose).not.toHaveBeenCalled()
+
+    for (let i = 0; i < 11; i++) {
+      player.step()
+    }
+    // Ramp-out frames still write decaying poses.
+    expect(appliedPoses.length).toBe(23)
+    expect(releasePose).not.toHaveBeenCalled()
+
+    // The 12th ramp-out frame drops the gain to zero, releases, and reports
+    // full release so the director can uninstall the hook.
+    expect(player.step()).toBe(true)
     expect(releasePose).toHaveBeenCalledWith(fakeVrm)
+    expect(applyPoseToVrm).toHaveBeenCalledTimes(23) // unchanged
 
     // Step when disabled does nothing
     player.step()
-    expect(applyPoseToVrm).toHaveBeenCalledTimes(12) // unchanged
+    expect(applyPoseToVrm).toHaveBeenCalledTimes(23) // unchanged
 
     // Dispose
     player.dispose()

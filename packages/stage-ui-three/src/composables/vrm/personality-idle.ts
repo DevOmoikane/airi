@@ -1,10 +1,10 @@
 import type { VRM } from '@pixiv/three-vrm'
 import type { MagicModel, TrainingSequence, VarFitOptions } from '@proj-airi/motion-driver-magic'
 import type { ReadonlyLive2DMotionRecording } from '@proj-airi/stage-shared/personality'
-import type { Vector3 } from 'three'
+import type { Object3D } from 'three'
 
 import { fit } from '@proj-airi/motion-driver-magic'
-import { Object3D } from 'three'
+import { Euler, Quaternion } from 'three'
 
 /** Ordered channels shared by MAGIC generated frames and v6 recordings. */
 export const VRM_IDLE_PERSONALITY_AXES = [
@@ -140,7 +140,6 @@ export type VrmIdlePersonalityModelFactory = (
 
 const HEAD_MAX_RAD = 0.5
 const BODY_MAX_RAD = 0.3
-const EYE_OFFSET_SCALE = 0.35
 const SMOOTHING_FACTOR = 0.3
 const GAIN_RAMP_FRAMES = 12
 
@@ -148,18 +147,65 @@ const GAIN_RAMP_FRAMES = 12
 export type VrmIdlePersonalityPoseApplier = (pose: VrmIdlePersonalityPose, vrm: VRM) => void
 
 /**
+ * Detects whether a bone quaternion still holds the composite we wrote on a
+ * previous frame. The mixer rebinding properties it owns writes every bound
+ * track each `mixer.update()`, but a clip without a track for a bone leaves
+ * that bone untouched, so an in-place delta multiply would stack frame over
+ * frame and drift the pose away.
+ */
+function areQuaternionsClose(a: Quaternion, b: Quaternion): boolean {
+  return Math.abs(a.x - b.x) < 1e-5
+    && Math.abs(a.y - b.y) < 1e-5
+    && Math.abs(a.z - b.z) < 1e-5
+    && Math.abs(a.w - b.w) < 1e-5
+}
+
+/**
+ * Applies one rotation delta on top of the bone pose with per-bone delta
+ * bookkeeping. When the animation mixer did not rewrite the bone since our
+ * last write, the previous delta is undone first so deltas never accumulate.
+ */
+function applyBoneRotationDelta(
+  bone: Object3D,
+  states: WeakMap<Object3D, { base: Quaternion, composite: Quaternion }>,
+  delta: Quaternion,
+) {
+  let state = states.get(bone)
+  if (!state) {
+    state = { base: new Quaternion(), composite: new Quaternion() }
+    states.set(bone, state)
+  }
+
+  const quaternion = bone.quaternion
+  if (areQuaternionsClose(quaternion, state.composite)) {
+    // The bone still carries last frame's delta, which means the mixer did
+    // not rewrite it. Restore the pre-delta rotation before applying the new
+    // delta so repeated application does not compound.
+    quaternion.copy(state.base)
+  }
+  state.base.copy(quaternion)
+  quaternion.multiply(delta)
+  state.composite.copy(quaternion)
+}
+
+/**
  * Default pose applier for the VRM idle personality player.
  *
- * Writes normalized head and body rotations, offsets the lookAt target from
- * its captured rest position, and mirrors eye squint / mouth opening through
- * guarded expressions. Head and body rotations are low-pass filtered and the
- * player fades the whole pose in, so the character eases into the motion
- * instead of popping.
+ * Multiplies small low-pass filtered rotation deltas onto the head, spine, and
+ * chest normalized bones instead of setting absolute rotations, so the
+ * generator composes with whatever pose the animation mixer wrote this frame
+ * rather than replacing it. Eye squint and mouth opening go through guarded
+ * expressions; the frame loop runs blink and lip sync after this applier, so
+ * those systems keep precedence on their own channels.
  */
 function createDefaultVrmIdlePersonalityPoseApplier(): VrmIdlePersonalityPoseApplier {
   const smoothedHead = { x: 0, y: 0, z: 0 }
   const smoothedBody = { x: 0, y: 0, z: 0 }
-  let lookAtRestOffset: Vector3 | undefined
+  const deltaEuler = new Euler()
+  const deltaQuaternion = new Quaternion()
+  // Keyed by bone node object so a model swap (new VRM instance) starts with
+  // fresh bookkeeping without an explicit reset.
+  const boneStates = new WeakMap<Object3D, { base: Quaternion, composite: Quaternion }>()
 
   return (pose, vrm) => {
     const humanoid = vrm.humanoid
@@ -186,29 +232,21 @@ function createDefaultVrmIdlePersonalityPoseApplier(): VrmIdlePersonalityPoseApp
 
     const head = humanoid.getNormalizedBoneNode('head')
     if (head)
-      head.rotation.set(smoothedHead.x, smoothedHead.y, smoothedHead.z)
+      applyBoneRotationDelta(head, boneStates, deltaQuaternion.setFromEuler(deltaEuler.set(smoothedHead.x, smoothedHead.y, smoothedHead.z)))
 
     const spine = humanoid.getNormalizedBoneNode('spine')
-    const chest = humanoid.getNormalizedBoneNode('chest')
     if (spine)
-      spine.rotation.x = smoothedBody.y * 0.6
-    if (chest) {
-      chest.rotation.x = smoothedBody.y * 0.4
-      chest.rotation.y = smoothedBody.z
-      chest.rotation.z = smoothedBody.x
-    }
+      applyBoneRotationDelta(spine, boneStates, deltaQuaternion.setFromEuler(deltaEuler.set(smoothedBody.y * 0.6, 0, 0)))
 
-    if (vrm.lookAt) {
-      if (!vrm.lookAt.target)
-        vrm.lookAt.target = new Object3D()
-      if (!lookAtRestOffset)
-        lookAtRestOffset = vrm.lookAt.target.position.clone()
-      vrm.lookAt.target.position.set(
-        lookAtRestOffset.x + pose.eyeX * EYE_OFFSET_SCALE,
-        lookAtRestOffset.y + pose.eyeY * EYE_OFFSET_SCALE,
-        lookAtRestOffset.z,
-      )
-    }
+    const chest = humanoid.getNormalizedBoneNode('chest')
+    if (chest)
+      applyBoneRotationDelta(chest, boneStates, deltaQuaternion.setFromEuler(deltaEuler.set(smoothedBody.y * 0.4, smoothedBody.z, smoothedBody.x)))
+
+    // NOTICE: The lookAt target and eye bones are intentionally left alone.
+    // Cursor tracking and saccades own the target position, and VRMLookAt
+    // rewrites eye rotations after the runtime hook, so writing either one here
+    // fought the tracker and produced jerky gaze. Personality gaze rides on the
+    // head axes instead.
 
     const expressionManager = vrm.expressionManager
     if (expressionManager) {
@@ -221,12 +259,30 @@ function createDefaultVrmIdlePersonalityPoseApplier(): VrmIdlePersonalityPoseApp
   }
 }
 
+/**
+ * Clears the expression channels the default applier writes, so a released
+ * personality does not leave a frozen squint or mouth pose. Bone deltas need
+ * no clear: the mixer rewrites its bones every frame and untracked bones keep
+ * bookkeeping through the bone state map.
+ */
+function createDefaultVrmIdlePersonalityRelease(): (vrm: VRM) => void {
+  return (vrm) => {
+    const expressionManager = vrm.expressionManager
+    if (!expressionManager)
+      return
+    if (expressionManager.expressionMap.aa)
+      expressionManager.setValue('aa', 0)
+    if (expressionManager.expressionMap.blink)
+      expressionManager.setValue('blink', 0)
+  }
+}
+
 export interface VrmIdleMotionPlayerOptions {
   /** Source recording used to fit the personality generator. */
   dataset: ReadonlyLive2DMotionRecording
   /** Applies one generated pose to the model. @default normalized bone writer */
   applyPoseToVrm?: VrmIdlePersonalityPoseApplier
-  /** Releases the personality pose when the player is disabled or disposed. */
+  /** Releases the personality pose when the player is disabled or disposed. @default clears applier expressions */
   releasePose?: (vrm: VRM) => void
   /** Supplies the model noise scale for each generated frame. @default 1 */
   noiseScale?: () => number
@@ -235,11 +291,16 @@ export interface VrmIdleMotionPlayerOptions {
 }
 
 export interface VrmIdleMotionPlayer {
-  /** Binds the player to a model. Passing `undefined` disables it. */
+  /** Binds the player to a model, fading the pose in. Passing `undefined` starts a fade-out. */
   setEnabled: (vrm?: VRM) => void
-  /** Advances the generator by one frame when enabled. */
-  step: () => void
-  /** Unbinds the model and releases the pose. */
+  /**
+   * Advances the fade and the generator by one frame.
+   *
+   * @returns `true` once the player is fully released and no longer writes a
+   * pose; `false` while the pose is active or still fading.
+   */
+  step: () => boolean
+  /** Unbinds the model immediately and releases the pose without fading. */
   dispose: () => void
 }
 
@@ -247,48 +308,67 @@ export interface VrmIdleMotionPlayer {
  * Owns the generator loop for one VRM idle personality.
  *
  * The player fits one VAR model over the dataset at construction and reuses
- * its generator for the whole session. Generated frames fade in over the first
- * steps so the character eases into the motion instead of popping.
+ * its generator for the whole session. The generated pose carries a gain that
+ * ramps in over the first steps after `setEnabled(vrm)` and ramps back to zero
+ * after `setEnabled(undefined)`, so the character eases into and out of the
+ * motion instead of popping.
  */
 export function createVrmIdleMotionPlayer(options: VrmIdleMotionPlayerOptions): VrmIdleMotionPlayer {
   const fitModel = options.fitModel ?? ((sequence: TrainingSequence) => fit(sequence, { method: 'var', order: 20, ridge: 0.001 }))
   const applyPose = options.applyPoseToVrm ?? createDefaultVrmIdlePersonalityPoseApplier()
+  const releasePose = options.releasePose ?? createDefaultVrmIdlePersonalityRelease()
   const noiseScale = options.noiseScale ?? (() => 1)
   const model = fitModel(toVrmTrainingSequence(options.dataset), { method: 'var', order: 20, ridge: 0.001 })
   const generator = model.toGenerator({ seed: 1 })
 
   let currentVrm: VRM | undefined
   let gain = 0
+  let targetGain = 0
 
   function setEnabled(vrm?: VRM) {
-    if (vrm === currentVrm)
+    if (vrm) {
+      // Re-binding resumes from the current gain instead of snapping to zero,
+      // so a flickering activation keeps the motion continuous.
+      currentVrm = vrm
+      targetGain = 1
       return
-    const previous = currentVrm
-    currentVrm = vrm
-    gain = 0
-    if (!vrm && previous)
-      options.releasePose?.(previous)
+    }
+    if (!currentVrm)
+      return
+    targetGain = 0
   }
 
   function step() {
     if (!currentVrm)
-      return
-    if (gain < 1)
-      gain = Math.min(1, gain + 1 / GAIN_RAMP_FRAMES)
+      return true
+
+    if (gain !== targetGain) {
+      const nextGain = gain + Math.sign(targetGain - gain) / GAIN_RAMP_FRAMES
+      if (nextGain <= 0) {
+        const previous = currentVrm
+        currentVrm = undefined
+        gain = 0
+        releasePose(previous)
+        return true
+      }
+      gain = Math.min(1, nextGain)
+    }
 
     const frame = generator.next({ noiseScale: noiseScale() })
     const pose = vrmIdlePersonalityPoseFromValues(poseFromValues(frame.values))
     for (const axis of VRM_IDLE_PERSONALITY_AXES)
       pose[axis] *= gain
     applyPose(pose, currentVrm)
+    return false
   }
 
   function dispose() {
     const previous = currentVrm
     currentVrm = undefined
     gain = 0
+    targetGain = 0
     if (previous)
-      options.releasePose?.(previous)
+      releasePose(previous)
   }
 
   return { setEnabled, step, dispose }

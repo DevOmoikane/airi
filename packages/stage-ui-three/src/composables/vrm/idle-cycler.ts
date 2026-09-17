@@ -29,10 +29,10 @@ export interface VrmIdleCycler {
  *
  * Timing is observation-driven rather than ownership-driven: the cycler only
  * advances while the active clip's action is actually running on the mixer.
- * When a personality takes over, the director calls `mixer.stopAllAction()`
- * (making the action inactive) and on release restarts the clip with
- * `clipAction(idleClip).reset().play()`; either event resets the cycler clock,
- * so a resumed clip always gets a full fresh play-through. Crossfades use the
+ * The idle personality overlays on top of the clips and never stops them, so
+ * the clock keeps advancing during a personality run. The clock resets only
+ * when the action stops for real (paused render loop, model reload), so a
+ * resumed clip always gets a full fresh play-through. Crossfades use the
  * mixer's built-in weight interpolation, and the faded-out action auto-disables
  * when its weight reaches zero.
  */

@@ -43,13 +43,13 @@ The shared driver produces AEIOU weights. The VRM adapter maps these weights to 
 `composables/vrm/personality-idle` plays an idle personality recording as subtle, non-looping motion.
 
 - `VRM_IDLE_PERSONALITY_AXES` is the ordered channel model shared with the Live2D personality playback, so a recording stays comparable across renderers.
-- `toVrmTrainingSequence` resamples a v6 recording onto a fixed time grid; the driver fits a MAGIC variant model, then generates and clamps each frame before the neck, spine, eye-target, and expression channels are applied.
-- `createVrmIdleMotionPlayer` steps a generator behind a short gain ramp so motion fades in and out without pops.
+- `toVrmTrainingSequence` resamples a v6 recording onto a fixed time grid; the driver fits a MAGIC variant model, then generates and clamps each frame before the head, spine, chest, and expression channels are applied.
+- `createVrmIdleMotionPlayer` multiplies small filtered rotation deltas onto the bone quaternions the animation mixer wrote that frame, so the personality overlays on top of any playing clip. A gain ramp eases the motion in and out without pops, and per-bone state undoes the previous delta when a clip lacks a track for that bone.
 
 `composables/vrm/personality-idle-director` (`createPersonalityIdleVrmDirector`) owns activation gating for `VRMModel`:
 
-- It watches the shared idle personality store and the model refs. While a personality is selected and the model is not paused, it pauses the idle VRMA clip and installs a composed frame hook that runs the external runtime hook first and the generator step last, immediately before `humanoid.update()`.
-- When the personality is cleared, the player is disposed and the idle VRMA clip resumes.
+- The mixer and the idle cycler keep owning clip playback; the director never starts, stops, or fades clips. While a personality is selected and the model is not paused, it installs a composed frame hook that runs the external runtime hook first and the generator step last, immediately before `humanoid.update()`.
+- When the personality is cleared, the generator gain ramps out inside the composed hook, and the hook uninstalls itself once the player reports full release. The idle clip keeps playing underneath throughout.
 - External callers keep registering their runtime hook through `setVrmFrameHook`; the hooks are recomposed onto the personality chain rather than replaced.
 
 ## Scene Lifecycle

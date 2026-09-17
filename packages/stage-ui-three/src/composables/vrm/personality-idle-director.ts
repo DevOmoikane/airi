@@ -40,28 +40,34 @@ export interface PersonalityIdleVrmDirector {
   sync: () => Promise<void>
   /** Recomposes the installed hook after the external hook changed. */
   setExternalHook: () => void
-  /** Disposes the player, restores the external hook, and resumes the idle clip. */
+  /** Disposes the player immediately and restores the external hook. */
   dispose: () => void
 }
 
 /**
- * Owns the gating, chaining, and cleanup for the VRM idle personality player.
+ * Owns the gating, hook composition, and lifecycle for the VRM idle
+ * personality player.
  *
- * The director reads the shared idle personality store and the model refs on
- * every `sync()` call and decides whether the generator should run:
+ * State model: the animation mixer and the idle cycler always own clip
+ * playback at full weight; this director never starts, stops, rewinds, or
+ * fades clips. The director only decides whether the generator step is
+ * composed into the frame runtime hook:
  *
- *   - active personality + model present + not paused
- *     -> pause the idle VRMA clip, load the recording, create the player once
- *        (reusing it until the personality id changes), and install a composed
- *        frame hook that runs the external hook first and the generator step
- *        last, immediately before `humanoid.update()`.
- *   - any other combination
- *     -> dispose the player, restore the external hook, and resume the idle
- *        VRMA clip.
+ *   - DETACHED: runtime hook is the external hook alone. The generator writes
+ *     nothing.
+ *   - ATTACHED: runtime hook runs the external hook, then the generator step.
+ *     The step multiplies small filtered rotation deltas onto the bone
+ *     quaternions the mixer wrote earlier in the same frame, so the idle loop
+ *     keeps playing underneath and the personality rides on top as an overlay.
  *
- * Hook ownership lives with the director: external callers hand the director a
- * raw hook and the director writes the composed hook into the runtime slot, so
- * the model never double-steps the generator when the external hook changes.
+ * The player ramps an internal gain in over its first frames after attach and
+ * back out after detach, so poses ease instead of snapping. A ramp-out must
+ * keep running its remaining frames, so on detach the hook stays composed
+ * until the player reports full release; the hook then uninstalls itself.
+ * Setting the runtime hook slot from inside a running hook call is safe: the
+ * frame loop reads the slot fresh on every frame. The handoff in both
+ * directions rides on a gain that reaches exactly zero, so the last written
+ * delta is invisible and the clip pose stands alone.
  */
 export function createPersonalityIdleVrmDirector(options: PersonalityIdleVrmDirectorOptions): PersonalityIdleVrmDirector {
   const createPlayer = options.createPlayer ?? (recording => createVrmIdleMotionPlayer({ dataset: recording }))
@@ -69,34 +75,40 @@ export function createPersonalityIdleVrmDirector(options: PersonalityIdleVrmDire
   let activationToken = 0
   let player: VrmIdleMotionPlayer | undefined
   let playerPersonalityId: string | undefined
+  /** Whether the composed hook should include the player step. */
+  let attached = false
 
   function recomposeRuntimeHook() {
     const externalHook = options.externalHook.get()
-    if (!player) {
+    const activePlayer = attached ? player : undefined
+    if (!activePlayer) {
       options.runtimeHook.set(externalHook)
       return
     }
 
     options.runtimeHook.set((vrm, delta) => {
       externalHook?.(vrm, delta)
-      player?.step()
+      const released = activePlayer.step()
+      if (released) {
+        // The gain finished ramping out, so drop the player from the
+        // composition. The mixer-written pose stands alone from this frame on,
+        // because the last applied gain was zero.
+        attached = false
+        options.runtimeHook.set(options.externalHook.get())
+      }
     })
   }
 
-  function releaseRun() {
-    activationToken += 1
-    const previousPlayer = player
-    player = undefined
-    playerPersonalityId = undefined
-    previousPlayer?.dispose()
-    options.runtimeHook.set(options.externalHook.get())
-
-    const mixer = options.mixer()
-    const idleClip = options.idleClip()
-    if (!mixer || !idleClip)
+  /** Soft release: ramp the generator gain out over the coming frames. */
+  function detachPlayer() {
+    if (!player) {
+      attached = false
+      options.runtimeHook.set(options.externalHook.get())
       return
-    mixer.stopAllAction()
-    mixer.clipAction(idleClip).reset().play()
+    }
+    player.setEnabled(undefined)
+    attached = true
+    recomposeRuntimeHook()
   }
 
   async function sync() {
@@ -108,11 +120,9 @@ export function createPersonalityIdleVrmDirector(options: PersonalityIdleVrmDire
     const shouldRun = !!id && !!activeVrm && !!idleClip && !!mixer && !options.paused()
 
     if (!shouldRun) {
-      releaseRun()
+      detachPlayer()
       return
     }
-
-    mixer.stopAllAction()
 
     let recording: Live2DMotionRecording
     try {
@@ -120,10 +130,12 @@ export function createPersonalityIdleVrmDirector(options: PersonalityIdleVrmDire
     }
     catch {
       if (token === activationToken)
-        releaseRun()
+        detachPlayer()
       return
     }
 
+    // A newer sync decision (model swap, personality change, pause) took over
+    // while the dataset was loading, so this stale load must not attach.
     if (token !== activationToken)
       return
 
@@ -134,6 +146,7 @@ export function createPersonalityIdleVrmDirector(options: PersonalityIdleVrmDire
     }
 
     player.setEnabled(activeVrm)
+    attached = true
     recomposeRuntimeHook()
   }
 
@@ -143,7 +156,14 @@ export function createPersonalityIdleVrmDirector(options: PersonalityIdleVrmDire
 
   function dispose() {
     activationToken += 1
-    releaseRun()
+    attached = false
+    const previousPlayer = player
+    player = undefined
+    playerPersonalityId = undefined
+    // Hard release: the owner is going away, so no frames remain to run a
+    // ramp-out. Restore the external hook so late calls see a clean slot.
+    previousPlayer?.dispose()
+    options.runtimeHook.set(options.externalHook.get())
   }
 
   return { sync, setExternalHook, dispose }
