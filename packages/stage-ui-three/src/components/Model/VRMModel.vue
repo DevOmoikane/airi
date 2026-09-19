@@ -8,6 +8,7 @@
 
 import type { VRM } from '@pixiv/three-vrm'
 import type {
+  AnimationAction,
   AnimationClip,
   Group,
   Material,
@@ -27,6 +28,7 @@ import type { VrmLifecycleReason } from '../../trace'
 import type { ManagedVrmInstance } from './vrm-instance-cache'
 
 import { VRMUtils } from '@pixiv/three-vrm'
+import { useIdlePreviewState } from '@proj-airi/stage-shared/composables'
 import { useIdlePersonalityStore } from '@proj-airi/stage-shared/personality'
 import { useLoop, useTresContext } from '@tresjs/core'
 import { until } from '@vueuse/core'
@@ -220,11 +222,20 @@ const previousVrmFrameRuntimeHook = shallowRef<PersonalityIdleVrmFrameHook>()
 
 const idlePersonalityStore = useIdlePersonalityStore()
 
+// Live-only personality preview requested from the settings windows. It wins
+// over the cycler's pick so the previewed personality plays on every window
+// that renders this model, and falls back to the store's active pick when no
+// preview runs.
+const idlePreview = useIdlePreviewState()
+const effectiveActivePersonalityId = computed(() =>
+  idlePreview.state.value.personalityId ?? idlePersonalityStore.activePersonalityId,
+)
+
 const idlePersonalityDirector = createPersonalityIdleVrmDirector({
   vrm: () => vrm.value,
   idleClip: () => vrmIdleVrmaClip.value,
   mixer: () => vrmAnimationMixer.value,
-  activePersonalityId: () => idlePersonalityStore.activePersonalityId,
+  activePersonalityId: () => effectiveActivePersonalityId.value,
   paused: () => paused.value,
   loadDataset: id => idlePersonalityStore.loadDataset(id),
   runtimeHook: {
@@ -240,7 +251,7 @@ const idlePersonalityDirector = createPersonalityIdleVrmDirector({
 })
 
 watch(
-  [vrm, () => idlePersonalityStore.activePersonalityId, () => paused.value],
+  [vrm, () => effectiveActivePersonalityId.value, () => paused.value],
   () => {
     void idlePersonalityDirector.sync()
   },
@@ -450,6 +461,7 @@ async function reseedIdleAnimations(urls: string[]) {
       if (clip) {
         reAnchorRootPositionTrack(clip, activeVrm)
         clips.push(clip)
+        logIdleClipDiagnostics(clip, url)
       }
     }
     catch (e) {
@@ -464,7 +476,9 @@ async function reseedIdleAnimations(urls: string[]) {
 
   activeMixer.stopAllAction()
   const firstClip = clips[0]
-  activeMixer.clipAction(firstClip).play()
+  const firstAction = activeMixer.clipAction(firstClip)
+  firstAction.play()
+  logIdleClipActionState(firstClip, firstAction)
 
   vrmIdleClips.value = clips
   vrmIdleVrmaClip.value = firstClip
@@ -496,6 +510,45 @@ function shouldDestroyVrmResources(reason: VrmLifecycleReason) {
 
 function shouldStashVrmResources(reason: VrmLifecycleReason) {
   return reason === 'component-unmount'
+}
+
+/**
+ * Reports the shape of one built idle clip so a silent bind failure is visible
+ * in the stage console. A clip that produced no humanoid tracks still plays
+ * successfully while animating nothing, which reads as the T-pose freeze
+ * reported on imported v1 models.
+ */
+function logIdleClipDiagnostics(clip: AnimationClip, url: string) {
+  const humanoidRotationTracks = clip.tracks.filter(track => /^Normalized_.+\.quaternion$/.test(track.name)).length
+  const humanoidTranslationTracks = clip.tracks.filter(track => /^Normalized_.+\.position$/.test(track.name)).length
+  const expressionTracks = clip.tracks.filter(track => track.name.endsWith('.weight')).length
+  const lookAtTracks = clip.tracks.filter(track => track.name === 'lookAtQuaternionProxy.quaternion').length
+  const label = clip.name || url
+
+  if (import.meta.env.DEV) {
+    console.info(
+      `[stage-ui-three] idle clip "${label}": tracks=${clip.tracks.length}`
+      + ` humanoid-rotation=${humanoidRotationTracks} humanoid-translation=${humanoidTranslationTracks}`
+      + ` expression=${expressionTracks} lookAt=${lookAtTracks} duration=${clip.duration.toFixed(2)}s`,
+    )
+  }
+
+  if (humanoidRotationTracks === 0) {
+    console.warn(
+      `[stage-ui-three] idle clip "${label}" carries no humanoid rotation tracks;`
+      + ' the model will stay at its rest pose while the clip plays.',
+    )
+  }
+}
+
+function logIdleClipActionState(clip: AnimationClip, action: AnimationAction) {
+  if (!import.meta.env.DEV)
+    return
+
+  console.info(
+    `[stage-ui-three] idle action for "${clip.name}":`
+    + ` enabled=${action.enabled} weight=${action.weight.toFixed(2)} isRunning=${action.isRunning()}`,
+  )
 }
 
 function updateManagedVrmMaterials(activeVrm: VRM | undefined, delta: number) {
@@ -537,6 +590,26 @@ function runVrmFrameRuntimeHook(vrm: VRM, delta: number) {
   }
   catch (error) {
     console.error(error)
+    emit('error', error)
+  }
+}
+
+/**
+ * Runs one render-loop step with its exceptions contained.
+ *
+ * Every step below mixer.update() feeds the same visible rig: only
+ * humanoid.update() copies the normalized pose onto the raw bones the meshes
+ * actually follow. A step that throws (a bad frame hook, a broken clip track,
+ * a model-specific material path) must degrade to that step alone, never
+ * cancel the rest of the frame, or the model freezes at T-pose while every
+ * console error looks unrelated to animation.
+ */
+function runGuardedFrameStep(name: string, step: () => void) {
+  try {
+    step()
+  }
+  catch (error) {
+    console.error(`[stage-ui-three] VRM frame step "${name}" failed; continuing the frame.`, error)
     emit('error', error)
   }
 }
@@ -585,12 +658,16 @@ function bindManagedVrmInstanceRenderLoop() {
     const tracingEnabled = traceStart > 0
 
     const animationMixerMs = measureFrameStep(tracingEnabled, () => {
-      vrmAnimationMixer.value?.update(delta)
-      vrmIdleCycler.step(delta)
+      runGuardedFrameStep('animation-mixer', () => {
+        vrmAnimationMixer.value?.update(delta)
+      })
+      runGuardedFrameStep('idle-cycler', () => vrmIdleCycler.step(delta))
     })
     const activeVrm = vrm.value
     const activeVrmGroup = vrmGroup.value
-    updateManagedVrmMaterials(activeVrm, delta)
+    runGuardedFrameStep('material-update', () => {
+      updateManagedVrmMaterials(activeVrm, delta)
+    })
     const vrmFrameHookMs = measureFrameStep(tracingEnabled, () => {
       if (activeVrm && activeVrmGroup) {
         runVrmFrameHooks({
@@ -606,28 +683,44 @@ function bindManagedVrmInstanceRenderLoop() {
         runVrmFrameRuntimeHook(activeVrm, delta)
     })
     const humanoidMs = measureFrameStep(tracingEnabled, () => {
-      activeVrm?.humanoid.update()
+      runGuardedFrameStep('humanoid-update', () => {
+        activeVrm?.humanoid.update()
+      })
     })
     const lookAtMs = measureFrameStep(tracingEnabled, () => {
-      activeVrm?.lookAt?.update?.(delta)
+      runGuardedFrameStep('lookat', () => {
+        activeVrm?.lookAt?.update?.(delta)
+      })
     })
     const blinkAndSaccadeMs = measureFrameStep(tracingEnabled, () => {
-      blink.update(activeVrm, delta)
+      runGuardedFrameStep('blink', () => {
+        blink.update(activeVrm, delta)
+      })
     })
     const emoteMs = measureFrameStep(tracingEnabled, () => {
-      vrmEmote.value?.update(delta)
+      runGuardedFrameStep('emote', () => {
+        vrmEmote.value?.update(delta)
+      })
     })
     const lipSyncMs = measureFrameStep(tracingEnabled, () => {
-      vrmLipSync.update(activeVrm, delta)
+      runGuardedFrameStep('lip-sync', () => {
+        vrmLipSync.update(activeVrm, delta)
+      })
     })
     const expressionMs = measureFrameStep(tracingEnabled, () => {
-      activeVrm?.expressionManager?.update()
+      runGuardedFrameStep('expression', () => {
+        activeVrm?.expressionManager?.update()
+      })
     })
     const nodeConstraintMs = measureFrameStep(tracingEnabled, () => {
-      activeVrm?.nodeConstraintManager?.update()
+      runGuardedFrameStep('node-constraint', () => {
+        activeVrm?.nodeConstraintManager?.update()
+      })
     })
     const springBoneMs = measureFrameStep(tracingEnabled, () => {
-      activeVrm?.springBoneManager?.update(delta)
+      runGuardedFrameStep('springbone', () => {
+        activeVrm?.springBoneManager?.update(delta)
+      })
     })
 
     if (traceStart > 0) {
@@ -949,6 +1042,7 @@ async function loadModel() {
       // Re-anchor the root position track to the model origin
       reAnchorRootPositionTrack(clip, _vrm)
       clips.push(clip)
+      logIdleClipDiagnostics(clip, animationUrl)
     }
     if (clips.length === 0) {
       disposeDetachedVrm(nextVrm, nextVrmGroup)
@@ -962,7 +1056,9 @@ async function loadModel() {
     // play animation
     const firstClip = clips[0]
     nextVrmAnimationMixer = new AnimationMixer(_vrm.scene)
-    nextVrmAnimationMixer.clipAction(firstClip).play()
+    const firstAction = nextVrmAnimationMixer.clipAction(firstClip)
+    firstAction.play()
+    logIdleClipActionState(firstClip, firstAction)
 
     // Seed the idle clip pool and replay the switch decision tracker.
     vrmIdleClips.value = clips

@@ -1,8 +1,9 @@
 <script setup lang="ts">
+import { useIdlePreviewState } from '@proj-airi/stage-shared/composables'
 import { useVrmIdleAnimationStore } from '@proj-airi/stage-ui-three'
 import { Button, Checkbox, FieldInputFile, GhostButton } from '@proj-airi/ui'
 import { storeToRefs } from 'pinia'
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import { Section } from '../../../layouts'
@@ -14,6 +15,16 @@ const {
   customClips,
   enabledIds,
 } = storeToRefs(store)
+
+const preview = useIdlePreviewState()
+const previewingClipId = computed(() => preview.state.value.clipId)
+
+function toggleClipPreview(clipId: string) {
+  if (previewingClipId.value === clipId)
+    preview.stopIdlePreview()
+  else
+    preview.startClipPreview(clipId)
+}
 
 const importFiles = ref<File[] | undefined>(undefined)
 const importError = ref<string | null>(null)
@@ -83,11 +94,25 @@ async function handleReset() {
             {{ clip.name }}
           </div>
         </div>
-        <Checkbox
-          class="shrink-0"
-          :model-value="enabledIds.includes(clip.id)"
-          @update:model-value="value => store.setEnabled(clip.id, value)"
-        />
+        <div flex items-center gap-2>
+          <GhostButton
+            class="shrink-0"
+            size="sm"
+            :active="previewingClipId === clip.id"
+            :label="t(previewingClipId === clip.id
+              ? 'settings.vrm.idle-animation.stop-preview'
+              : 'settings.vrm.idle-animation.preview')"
+            :icon="previewingClipId === clip.id
+              ? 'i-solar:stop-circle-bold-duotone'
+              : 'i-solar:play-circle-bold-duotone'"
+            @click="toggleClipPreview(clip.id)"
+          />
+          <Checkbox
+            class="shrink-0"
+            :model-value="enabledIds.includes(clip.id)"
+            @update:model-value="value => store.setEnabled(clip.id, value)"
+          />
+        </div>
       </div>
     </div>
 
@@ -111,7 +136,19 @@ async function handleReset() {
             {{ t('settings.vrm.idle-animation.imported-at', { date: new Date(entry.importedAt).toLocaleDateString() }) }}
           </div>
         </div>
-        <div flex items-center gap-3>
+        <div flex items-center gap-2>
+          <GhostButton
+            class="shrink-0"
+            size="sm"
+            :active="previewingClipId === entry.id"
+            :label="t(previewingClipId === entry.id
+              ? 'settings.vrm.idle-animation.stop-preview'
+              : 'settings.vrm.idle-animation.preview')"
+            :icon="previewingClipId === entry.id
+              ? 'i-solar:stop-circle-bold-duotone'
+              : 'i-solar:play-circle-bold-duotone'"
+            @click="toggleClipPreview(entry.id)"
+          />
           <Checkbox
             class="shrink-0"
             :model-value="enabledIds.includes(entry.id)"

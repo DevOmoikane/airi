@@ -104,22 +104,77 @@ App-only runtime state is left:
 3. A stale instance from `vrm-instance-cache` or a stale blob in IndexedDB.
 4. A clip that builds but carries no humanoid tracks.
 
-## Next steps
+## Session update: 2026-09-16 (this machine)
 
-1. Run the app with `pnpm -F @proj-airi/stage-tamagotchi dev`.
-2. Open the stage window devtools. Watch the console during model load.
-   Look for errors from the clip path in `VRMModel.vue`.
-3. Enable the stage three runtime trace. Entry points:
+### The headless pipeline is healthy with every app-only load step included
+
+`scripts/repro-vrm-clip.ts` now mirrors the full app path instead of the bare
+load: `VRMLookAtQuaternionProxy` added before clip creation, the facing
+direction premultiplied onto the group, `springBoneManager.reset()`, the
+`reAnchorRootPositionTrack` re-anchor, and the app frame-loop order (mixer,
+proxy matrix update, `humanoid.update()`, lookAt, springbones). The verdict
+checks both arms, takes the maximum delta over playback (a healthy clip can
+return to rest before the loop ends), and compares the raw rig against its
+load-time pose instead of identity (a raw rest pose is not identity).
+
+Results, all exit 0:
+
+- Seed-san (v1) + bundled `idle_loop.vrma`: normalized 0.91, raw 1.14.
+- Seed-san (v1) + three-vrm `test.vrma`: normalized 1.00, raw 1.36.
+- AvatarSample_A (v0) + bundled `idle_loop.vrma`: normalized 0.91, raw 0.91.
+
+Every remaining load-path suspect from the list above is therefore clean in
+isolation. What a headless run cannot reach: the live stage window state
+(suspects 2 and 3) and model-specific per-frame throws (suspect 1 in the app).
+
+### Frame loop hardened in VRMModel.vue
+
+Suspect 1 was structurally possible: only `humanoid.update()` copies the
+normalized pose onto the raw bones the meshes follow, and a throw in the idle
+cycler or in any unguarded step cancelled the rest of the frame, including
+that copy. The loop now runs every step through `runGuardedFrameStep`, which
+logs the failing step name and keeps the frame going. If the app-side fault is
+a throwing step, the stage console now names it
+(`[stage-ui-three] VRM frame step "<name>" failed`).
+
+### Idle clip diagnostics added to VRMModel.vue
+
+Next step 6 is implemented as permanent DEV-gated logs rather than temporary
+instrumentation. At load and at reseed, `logIdleClipDiagnostics` prints track
+counts (humanoid rotation/translation, expression, lookAt) and duration, and
+warns when a clip carries zero humanoid rotation tracks (suspect 4: a clip
+that plays but animates nothing). After the first `clipAction().play()`,
+`logIdleClipActionState` prints enabled, weight, and isRunning (suspect 2: a
+clip bound but never played).
+
+### Pre-existing store test failure fixed
+
+`store.test.ts` failed on this machine before any change: under Node 26 the
+window's `localStorage` is Node's native storage, and jsdom 30's
+`StorageEvent` constructor rejects it as `storageArea`, so the simulated
+cross-window event could not be constructed. The test now writes the
+`customClips` storage ref directly, which is what VueUse applies after such an
+event. All 47 package tests pass.
+
+## Next steps (remaining)
+
+The static and headless work is exhausted. The fault, if it still reproduces,
+lives in live stage-window state. In order:
+
+1. Run the app with `pnpm -F @proj-airi/stage-tamagotchi dev` and load the
+   imported v1 model.
+2. Watch the stage window console. A guarded step failure now names itself;
+   the idle clip logs print at model load and reseed. A clip with
+   `humanoid-rotation=0` or `weight=0.00` is the answer.
+3. If the logs look healthy, read `settings/vrm/idle-animation/enabled-ids`
+   and `settings/vrm/idle-animation/custom-clips` in the stage window and
+   check the blob rows in IndexedDB (suspect 3).
+4. Re-run the extended repro with the exact model and clip from the user; the
+   script now reproduces every app load step, so a pass rules out the model
+   and clip pair entirely.
+5. Capture a stage three runtime trace if nothing above splits the case:
    `apps/stage-tamagotchi/src/renderer/stores/stage-three-runtime-diagnostics.ts`
    and `packages/stage-ui-three/src/trace/snapshots.ts`.
-4. In the stage window devtools, read these localStorage keys:
-   `settings/vrm/idle-animation/enabled-ids`
-   `settings/vrm/idle-animation/custom-clips`
-   Then check the blob rows in IndexedDB.
-5. Run the headless repro with the exact model and clip from the user:
-   `cd packages/stage-ui-three && npx tsx scripts/repro-vrm-clip.ts <vrm> <vrma>`
-6. If the repro passes, add a temporary log after `mixer.clipAction` in
-   `VRMModel.vue`. Log track count, action weight, and enabled state.
 
 ## Reproduction assets
 

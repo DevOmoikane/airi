@@ -191,12 +191,33 @@ export const useVrmIdleAnimationStore = defineStore('vrm-idle-animation', () => 
     return urls
   })
 
+  /**
+   * Resolves one clip id to a playable URL regardless of its enabled state.
+   *
+   * Used by idle previews, which must play clips that are not enabled. Custom
+   * clips hydrate their object URL on demand because URLs are window-scoped and
+   * the preview can arrive before this window has read the blob.
+   */
+  async function resolveClipUrl(id: string): Promise<string | undefined> {
+    const bundled = bundledIdleClipById[id]
+    if (bundled)
+      return bundled.url
+
+    const entry = customClips.value.find(candidate => candidate.id === id)
+    if (!entry)
+      return undefined
+
+    await hydrateClip(entry)
+    return customBlobUrls.value[id]
+  }
+
   return {
     enabledIds,
     customClips,
     customBlobUrls,
     bundledClips: bundledIdleClips,
     enabledClipUrls,
+    resolveClipUrl,
     setEnabled,
     importClip,
     removeCustom,

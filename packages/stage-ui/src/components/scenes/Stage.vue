@@ -15,6 +15,7 @@ import { sleep } from '@moeru/std'
 import { createLive2DLipSync } from '@proj-airi/model-driver-lipsync'
 import { wlipsyncProfile } from '@proj-airi/model-driver-lipsync/shared/wlipsync'
 import { createPlaybackManager, createSpeechPipeline, normalizeActPayload } from '@proj-airi/pipelines-audio'
+import { useIdlePreviewState } from '@proj-airi/stage-shared/composables'
 import { useIdlePersonalityStore } from '@proj-airi/stage-shared/personality'
 import { defaultLive2DMotionControlDynamics, Live2DScene, useLive2DMotionControl, useLive2dParams, useSettingsLive2d } from '@proj-airi/stage-ui-live2d'
 import { MMDScene } from '@proj-airi/stage-ui-mmd'
@@ -158,11 +159,27 @@ const {
   spineRenderScale,
 } = storeToRefs(settingsStore)
 const { mouthOpenSize, nowSpeaking } = storeToRefs(useSpeakingStore())
+// Live-only idle preview requested from the settings windows. The personality
+// preview bypasses the cycler by owning `activePersonalityId` directly; the
+// cycler stays gated until the preview clears. A clip preview instead overrides
+// the clip pool in ThreeScene and does not touch the cycler.
+const idlePreview = useIdlePreviewState()
+
 const idlePersonalityCycler = useIdlePersonalityCycler({
   paused: () => props.paused,
   nowSpeaking,
   motionControlOwnerId: live2dMotionControlOwnerId,
-  isIdle: () => !nowSpeaking.value,
+  isIdle: () => !nowSpeaking.value && !idlePreview.state.value.personalityId,
+})
+watch(() => idlePreview.state.value.personalityId, (previewPersonalityId) => {
+  // Stage.vue only mounts in the stage window; this mapping also carries the
+  // preview to the Live2D magic motion, which reads `activePersonalityId`.
+  // VRM windows read the preview directly in VRMModel.
+  idlePersonalityStore.setActivePersonalityId(previewPersonalityId)
+  // Repick immediately on stop instead of waiting out the full interval with
+  // only the bare idle clip playing.
+  if (!previewPersonalityId)
+    idlePersonalityCycler.kick()
 })
 onMounted(() => idlePersonalityCycler.start())
 onUnmounted(() => idlePersonalityCycler.stop())

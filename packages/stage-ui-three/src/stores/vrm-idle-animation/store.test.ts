@@ -209,15 +209,12 @@ describe('useVrmIdleAnimationStore', () => {
     const db = createVrmIdleAnimationBlobDb()
     const foreignId = 'custom-foreign-clip'
     await db.putBlob(foreignId, new File(['foreign-bytes'], 'foreign.vrma', { type: 'application/octet-stream' }))
-    const key = 'settings/vrm/idle-animation/custom-clips'
-    localStorage.setItem(key, JSON.stringify([{ id: foreignId, name: 'foreign', importedAt: Date.now() }]))
-    window.dispatchEvent(new StorageEvent('storage', {
-      key,
-      newValue: localStorage.getItem(key),
-      // VueUse ignores storage events whose storageArea differs from the
-      // instance's storage, so the simulated event must carry the real one.
-      storageArea: localStorage,
-    }))
+    // The settings window publishes metadata through localStorage and the
+    // storage event delivers it. Under Node 26 the window's localStorage is
+    // Node's native storage, which jsdom's StorageEvent constructor rejects,
+    // so the event cannot be constructed here. Writing the storage ref models
+    // what VueUse applies after that event: a customClips change.
+    store.customClips = [{ id: foreignId, name: 'foreign', importedAt: Date.now() }]
 
     try {
       await vi.waitFor(() => {

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useIdlePreviewState } from '@proj-airi/stage-shared/composables'
 import { bundledIdlePersonalityEntryById, parseLive2DMotionRecording, useIdlePersonalityStore } from '@proj-airi/stage-shared/personality'
 import { Button, Checkbox, FieldCheckbox, FieldInputFile, FieldRange, FieldSelect, GhostButton } from '@proj-airi/ui'
 import { storeToRefs } from 'pinia'
@@ -16,6 +17,16 @@ const {
   pinnedId,
   randomizeEnabled,
 } = storeToRefs(store)
+
+const preview = useIdlePreviewState()
+const previewingPersonalityId = computed(() => preview.state.value.personalityId)
+
+function togglePersonalityPreview(id: string) {
+  if (previewingPersonalityId.value === id)
+    preview.stopIdlePreview()
+  else
+    preview.startPersonalityPreview(id)
+}
 
 const bundledIds = Object.keys(bundledIdlePersonalityEntryById)
 
@@ -147,11 +158,25 @@ async function handleReset() {
             {{ personalityDescription(id) }}
           </div>
         </div>
-        <Checkbox
-          class="shrink-0"
-          :model-value="isEnabled(id)"
-          @update:model-value="value => store.setEnabled(id, value)"
-        />
+        <div flex items-center gap-2>
+          <GhostButton
+            class="shrink-0"
+            size="sm"
+            :active="previewingPersonalityId === id"
+            :label="t(previewingPersonalityId === id
+              ? 'settings.personality.stop-preview'
+              : 'settings.personality.preview')"
+            :icon="previewingPersonalityId === id
+              ? 'i-solar:stop-circle-bold-duotone'
+              : 'i-solar:play-circle-bold-duotone'"
+            @click="togglePersonalityPreview(id)"
+          />
+          <Checkbox
+            class="shrink-0"
+            :model-value="isEnabled(id)"
+            @update:model-value="value => store.setEnabled(id, value)"
+          />
+        </div>
       </div>
     </div>
 
@@ -172,7 +197,19 @@ async function handleReset() {
             {{ t('settings.personality.custom.imported-at', { date: new Date(entry.importedAt).toLocaleDateString() }) }}
           </div>
         </div>
-        <div flex items-center gap-3>
+        <div flex items-center gap-2>
+          <GhostButton
+            class="shrink-0"
+            size="sm"
+            :active="previewingPersonalityId === entry.id"
+            :label="t(previewingPersonalityId === entry.id
+              ? 'settings.personality.stop-preview'
+              : 'settings.personality.preview')"
+            :icon="previewingPersonalityId === entry.id
+              ? 'i-solar:stop-circle-bold-duotone'
+              : 'i-solar:play-circle-bold-duotone'"
+            @click="togglePersonalityPreview(entry.id)"
+          />
           <Checkbox
             class="shrink-0"
             :model-value="isEnabled(entry.id)"

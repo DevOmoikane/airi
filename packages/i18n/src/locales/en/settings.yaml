@@ -1849,6 +1849,8 @@ vrm:
     imported-at: Imported {date}
     remove: Remove
     reset-to-defaults: Reset to defaults
+    preview: Preview
+    stop-preview: Stop
 spine:
   title: Spine Settings
   scale-and-position:
@@ -1958,6 +1960,8 @@ personality:
   interval-hint: Between 15 and 90 seconds.
   pinned: Pinned personality
   pin-current: Pin current
+  preview: Preview
+  stop-preview: Stop
   list:
     title: Personalities
     bundled:

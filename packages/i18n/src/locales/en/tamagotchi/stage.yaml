@@ -24,6 +24,7 @@ docs:
   'switch-to-dark-mode': Switch to dark mode
   'pin-on-top': Pin on top
   'unpin-from-top': Unpin from top
+  'always-on-top-unavailable': Pin on top is not supported by this desktop (Wayland)
   'switch-profile': Switch Profile
   'close': Close
   'expand': Expand

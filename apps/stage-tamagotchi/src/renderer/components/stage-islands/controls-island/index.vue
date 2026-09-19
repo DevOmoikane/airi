@@ -6,7 +6,7 @@ import { useSettings, useSettingsAudioDevice } from '@proj-airi/stage-ui/stores/
 import { ScrollableArea, useTheme } from '@proj-airi/ui'
 import { refDebounced, useIntervalFn, useMouseInElement, useMousePressed } from '@vueuse/core'
 import { storeToRefs } from 'pinia'
-import { computed, reactive, ref, useId, useTemplateRef, watch } from 'vue'
+import { computed, onMounted, reactive, ref, useId, useTemplateRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import StatusIsland from '../status-island/index.vue'
@@ -23,6 +23,7 @@ import {
   electron,
   electronAppQuit,
   electronCenterMainWindow,
+  electronGetWindowSupportsAlwaysOnTop,
   electronOpenChat,
   electronOpenSettings,
   electronStartDraggingWindow,
@@ -53,7 +54,22 @@ const openChat = useElectronEventaInvoke(electronOpenChat)
 const isLinux = useElectronEventaInvoke(electron.app.isLinux)
 const quitApp = useElectronEventaInvoke(electronAppQuit)
 const setAlwaysOnTop = useElectronEventaInvoke(electronWindowSetAlwaysOnTop)
+const getSupportsAlwaysOnTop = useElectronEventaInvoke(electronGetWindowSupportsAlwaysOnTop)
 const centerMainWindow = useElectronEventaInvoke(electronCenterMainWindow)
+
+// Wayland compositors ignore stacking requests, so the pin option would read
+// as broken. Detect it once per window and reflect it on the pin control.
+const supportsAlwaysOnTop = ref(true)
+onMounted(async () => {
+  try {
+    const result = await getSupportsAlwaysOnTop()
+    supportsAlwaysOnTop.value = result?.effective ?? true
+  }
+  catch {
+    // Unknown capability keeps the control usable; the request still reaches
+    // the main process and works wherever the platform honors it.
+  }
+})
 
 const expanded = ref(false)
 // Closing disables interaction immediately. Keep layout until the exit
@@ -148,7 +164,8 @@ useIntervalFn(() => {
   }
 }, 1500)
 
-// Apply alwaysOnTop on mount and when it changes
+// Apply alwaysOnTop on mount and when it changes. The request still goes out
+// on Wayland: it is silently ineffective there, and the UI states that.
 watch(alwaysOnTop, (val) => {
   setAlwaysOnTop(val)
 }, { immediate: true })
@@ -386,6 +403,7 @@ function resetMainWindowPosition() {
                         action: alwaysOnTop ? 'unpin_from_top' : 'pin_on_top',
                       }"
                       :button-style="adjustStyleClasses.button"
+                      :disabled="!supportsAlwaysOnTop"
                       :aria-label="alwaysOnTop ? t('tamagotchi.stage.controls-island.unpin-from-top') : t('tamagotchi.stage.controls-island.pin-on-top')"
                       @click="toggleAlwaysOnTop"
                     >
@@ -393,7 +411,12 @@ function resetMainWindowPosition() {
                       <div v-else i-solar:pin-linear :class="adjustStyleClasses.icon" text="neutral-800 dark:neutral-300 opacity-50" />
                     </ControlButton>
                     <template #tooltip>
-                      {{ alwaysOnTop ? t('tamagotchi.stage.controls-island.unpin-from-top') : t('tamagotchi.stage.controls-island.pin-on-top') }}
+                      <template v-if="supportsAlwaysOnTop">
+                        {{ alwaysOnTop ? t('tamagotchi.stage.controls-island.unpin-from-top') : t('tamagotchi.stage.controls-island.pin-on-top') }}
+                      </template>
+                      <template v-else>
+                        {{ t('tamagotchi.stage.controls-island.always-on-top-unavailable') }}
+                      </template>
                     </template>
                   </ControlButtonTooltip>
 

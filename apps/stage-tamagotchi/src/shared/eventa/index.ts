@@ -360,6 +360,16 @@ export interface ElectronWindowLifecycleState {
 export const electronWindowLifecycleChanged = defineEventa<ElectronWindowLifecycleState>('eventa:event:electron:window:lifecycle-changed')
 export const electronGetWindowLifecycleState = defineInvokeEventa<ElectronWindowLifecycleState>('eventa:invoke:electron:window:get-lifecycle-state')
 export const electronWindowSetAlwaysOnTop = defineInvokeEventa<void, boolean>('eventa:invoke:electron:window:set-always-on-top')
+/**
+ * Reports whether this window can actually stay above other applications.
+ *
+ * Expects: the calling renderer passes no payload; the answer is per-window
+ * because it also requires a visible, mapped window.
+ *
+ * Returns: `effective` is false when the host compositor ignores stacking
+ * requests (Wayland), and true when the platform honors them.
+ */
+export const electronGetWindowSupportsAlwaysOnTop = defineInvokeEventa<{ effective: boolean }>('eventa:invoke:electron:window:get-supports-always-on-top')
 export const electronAppOpenUserDataFolder = defineInvokeEventa<{ path: string }>('eventa:invoke:electron:app:open-user-data-folder')
 export const electronAppQuit = defineInvokeEventa<void>('eventa:invoke:electron:app:quit')
 
