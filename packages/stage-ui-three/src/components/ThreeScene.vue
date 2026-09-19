@@ -17,6 +17,7 @@ import type { SceneBootstrap, ScenePhase, Vec3 } from '../stores/model-store'
 import type { VrmLifecycleReason } from '../trace'
 
 import { coverRect, presenceBubbleIdle } from '@proj-airi/stage-shared'
+import { useIdlePreviewState } from '@proj-airi/stage-shared/composables'
 import { Screen } from '@proj-airi/ui'
 import { TresCanvas } from '@tresjs/core'
 import { EffectComposerPmndrs, HueSaturationPmndrs } from '@tresjs/post-processing'
@@ -149,8 +150,28 @@ provide(presenceBubblePaletteKey, (): PresenceBubblePalette => ({
 }))
 
 const vrmIdleAnimationStore = useVrmIdleAnimationStore()
+
+// Live-only clip preview requested from the settings windows. Resolved here so
+// every window that renders a VRM (stage and settings preview alike) plays the
+// same previewed clip; a single-clip pool keeps the cycler passive.
+const idlePreview = useIdlePreviewState()
+const previewClipUrl = ref<string>()
+watch(() => idlePreview.state.value.clipId, async (clipId) => {
+  if (!clipId) {
+    previewClipUrl.value = undefined
+    return
+  }
+  const url = await vrmIdleAnimationStore.resolveClipUrl(clipId)
+  // The request can change or be cleared while the blob hydrates; only the
+  // latest request may publish its URL.
+  if (idlePreview.state.value.clipId === clipId)
+    previewClipUrl.value = url
+})
+
 const effectiveIdleAnimations = computed(() =>
-  props.idleAnimations?.length ? props.idleAnimations : vrmIdleAnimationStore.enabledClipUrls,
+  previewClipUrl.value
+    ? [previewClipUrl.value]
+    : (props.idleAnimations?.length ? props.idleAnimations : vrmIdleAnimationStore.enabledClipUrls),
 )
 
 type ModelPhase = 'no-model' | 'loading' | 'ready' | 'error'
