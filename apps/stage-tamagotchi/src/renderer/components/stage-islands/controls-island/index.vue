@@ -25,7 +25,6 @@ import {
   electronAppQuit,
   electronCenterMainWindow,
   electronGetWindowSupportsAlwaysOnTop,
-  electronOpenChat,
   electronOpenSettings,
   electronStartDraggingWindow,
   electronWindowSetAlwaysOnTop,
