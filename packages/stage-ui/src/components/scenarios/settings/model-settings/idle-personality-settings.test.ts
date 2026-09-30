@@ -18,6 +18,8 @@ const personalityMessages = {
   'settings.personality.interval': 'Interval (seconds)',
   'settings.personality.interval-hint': 'Between 15 and 90 seconds.',
   'settings.personality.pinned': 'Pinned personality',
+  'settings.personality.preview': 'Preview',
+  'settings.personality.stop-preview': 'Stop',
   'settings.personality.list.title': 'Personalities',
   'settings.personality.list.bundled.name.idle-calm': 'Idle Calm',
   'settings.personality.list.bundled.name.speaking-excited': 'Speaking Excited',
@@ -138,7 +140,11 @@ describe('idlePersonalitySettings', () => {
     store.setEnabled('custom-1', true)
 
     const wrapper = mountSettings()
-    wrapper.findAllComponents({ name: 'GhostButton' }).at(0)!.trigger('click')
+    // Preview buttons always pass a label; the remove button does not.
+    const removeButton = wrapper.findAllComponents({ name: 'GhostButton' })
+      .find(button => button.attributes('label') === undefined)
+    expect(removeButton).toBeDefined()
+    removeButton!.trigger('click')
     await flushPromises()
 
     expect(store.customPersonalities).toEqual([])
